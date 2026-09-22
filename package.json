@@ -1,21 +1,21 @@
 {
-	"name": "@victor-software-house/pi-acp",
-	"version": "0.17.1",
-	"description": "ACP adapter for pi coding agent",
+	"name": "@josephjohncox/pi-acp",
+	"version": "0.18.0",
+	"description": "Joseph fork of pi-acp: ACP adapter with Zed Review Changes write gating",
 	"license": "MIT",
-	"author": "Victor Software House",
+	"author": "josephjohncox",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/victor-software-house/pi-acp.git"
+		"url": "https://github.com/josephjohncox/pi-acp.git"
 	},
 	"publishConfig": {
 		"access": "public",
 		"provenance": true
 	},
 	"bugs": {
-		"url": "https://github.com/victor-software-house/pi-acp/issues"
+		"url": "https://github.com/josephjohncox/pi-acp/issues"
 	},
-	"homepage": "https://github.com/victor-software-house/pi-acp#readme",
+	"homepage": "https://github.com/josephjohncox/pi-acp#readme",
 	"keywords": [
 		"acp",
 		"agent-client-protocol",

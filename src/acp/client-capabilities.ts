@@ -22,6 +22,8 @@ export interface ClientCapabilityFlags {
 	gatewayAuth: boolean;
 	/** Client supports `fs/read_text_file` requests (PRD-002 §FR-6). */
 	fsReadTextFile: boolean;
+	/** Client supports `fs/write_text_file` (Zed Review Changes / buffer apply). */
+	fsWriteTextFile: boolean;
 	/**
 	 * Client supports all `terminal/*` methods (createTerminal, terminalOutput,
 	 * waitForTerminalExit, releaseTerminal, killTerminal). When true, pi-acp
@@ -50,12 +52,12 @@ export function parseClientCapabilities(
 			: undefined;
 	const authMetaIsObject = typeof authMeta === "object" && authMeta !== null;
 
-	// biome-ignore lint/complexity/useLiteralKeys: tsc strict-mode index-signature access
 	return {
 		terminalOutput: metaIsObject && meta["terminal_output"] === true,
 		terminalAuth: metaIsObject && meta["terminal-auth"] === true,
 		gatewayAuth: authMetaIsObject && authMeta["gateway"] === true,
 		fsReadTextFile: safe.fs?.readTextFile === true,
+		fsWriteTextFile: safe.fs?.writeTextFile === true,
 		terminal: safe.terminal === true,
 	};
 }

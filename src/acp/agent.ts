@@ -54,13 +54,16 @@ import {
 	type CreateAgentSessionResult,
 	createAgentSession,
 	createBashToolDefinition,
+	createEditToolDefinition,
 	createReadToolDefinition,
+	createWriteToolDefinition,
 	getAgentDir,
 	SessionManager as PiSessionManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { createAcpBashOperations } from "@pi-acp/acp/acp-bash-operations";
 import { createAcpReadOperations } from "@pi-acp/acp/acp-read-operations";
+import { createGatedFsOperations } from "@pi-acp/acp/acp-write-operations";
 import { buildAuthMethods } from "@pi-acp/acp/auth";
 import { detectAuthError } from "@pi-acp/acp/auth-required";
 import {
@@ -189,6 +192,7 @@ export class PiAcpAgent implements ACPAgent {
 		terminalAuth: false,
 		gatewayAuth: false,
 		fsReadTextFile: false,
+		fsWriteTextFile: false,
 		terminal: false,
 	};
 
@@ -496,25 +500,29 @@ export class PiAcpAgent implements ACPAgent {
 		sessionIdRef: { current: string };
 		tools: string[];
 		customTools: ToolDefinition[];
-	} | null {
+	} {
 		const wantRead = this.clientCapabilities.fsReadTextFile;
 		const wantBash = this.clientCapabilities.terminal;
-		if (!wantRead && !wantBash) return null;
-
 		const sessionIdRef = { current: "" };
+		const sessionAllowWrites = { current: false };
 		const customTools: ToolDefinition[] = [];
+		const gated = createGatedFsOperations({
+			conn: this.conn,
+			getSessionId: () => sessionIdRef.current,
+			sessionAllowWrites,
+			useClientWrite: this.clientCapabilities.fsWriteTextFile,
+			useClientRead: this.clientCapabilities.fsReadTextFile,
+		});
+		customTools.push(
+			createEditToolDefinition(cwd, { operations: gated.edit }) as unknown as ToolDefinition,
+			createWriteToolDefinition(cwd, { operations: gated.write }) as unknown as ToolDefinition,
+		);
 
 		if (wantRead) {
 			const operations = createAcpReadOperations({
 				conn: this.conn,
 				getSessionId: () => sessionIdRef.current,
 			});
-			// Variance: `createReadToolDefinition` returns a narrowly-typed
-			// ToolDefinition; `customTools[]` expects the wide form. Pi's
-			// runtime treats every customTool through the unknown-args path,
-			// so widening is safe. TS's exactOptionalPropertyTypes flags it
-			// because `renderCall.args` is contravariant.
-			// oxlint-disable-next-line typescript/no-unsafe-type-assertion
 			const readToolDef = createReadToolDefinition(cwd, {
 				operations,
 			}) as unknown as ToolDefinition;
@@ -526,7 +534,6 @@ export class PiAcpAgent implements ACPAgent {
 				conn: this.conn,
 				getSessionId: () => sessionIdRef.current,
 			});
-			// oxlint-disable-next-line typescript/no-unsafe-type-assertion
 			const bashToolDef = createBashToolDefinition(cwd, {
 				operations,
 			}) as unknown as ToolDefinition;

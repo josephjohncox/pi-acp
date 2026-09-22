@@ -1,4 +1,21 @@
-# pi-acp
+# pi-acp (Joseph fork)
+
+This is **`@josephjohncox/pi-acp`**, a fork of [`victor-software-house/pi-acp`](https://github.com/victor-software-house/pi-acp). Extra behavior: write/edit tools go through Zed `fs/write_text_file` (Review Changes / buffer hunks) and `session/request_permission` before disk fallback.
+
+Install (after the first npm publish):
+
+```bash
+npm i -g @josephjohncox/pi-acp
+```
+
+Until then, run from this repo:
+
+```bash
+bun install && bun run build
+bun dist/index.mjs --daemon
+```
+
+Upstream ACP adapter docs follow.
 
 ACP ([Agent Client Protocol](https://agentclientprotocol.com/get-started/introduction)) adapter for [`pi`](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) coding agent.
 
@@ -248,12 +265,12 @@ test/
 
 ### SHOULD-level gaps
 
-- **`session/request_permission`** -- pi does not request permission from ACP clients before tool execution.
+- **`session/request_permission`** -- Joseph fork: write/shell tools request permission via ACP before execution (`allow-once`, `reject-once`, `allow-session-writes`). The card includes the diff or command.
 
 ### Not implemented (MAY / client capabilities)
 
 - **`agent_plan`** -- plan updates not emitted before tool execution. pi has no equivalent planning surface.
-- **ACP filesystem `write` delegation** (`fs/write_text_file`) -- pi writes locally. Not advertised. `fs/read_text_file` IS routed through ACP when the client advertises the capability (see Features → ACP-FS `read` delegation).
+- **ACP filesystem `write` delegation** (`fs/write_text_file`) -- Joseph fork: when the client advertises `fs.writeTextFile`, edits/writes go through Zed so Review Changes / buffer navigation works. Disk write is fallback plus a permission card.
 - **ACP terminal delegation** (`terminal/*`) -- DELEGATED. When the client advertises `clientCapabilities.terminal`, pi-acp overrides pi's built-in `bash` tool with an ACP `createTerminal`-backed implementation so commands run on the client's machine (Zed Remote routes `terminal/*` to the remote workspace). See Features → ACP terminal delegation.
 
 ### ACP optional methods implemented (substrate completion at v0.16.0+)

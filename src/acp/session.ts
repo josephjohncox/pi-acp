@@ -13,6 +13,11 @@ import {
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessageEvent, ToolCall } from "@earendil-works/pi-ai";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import {
+	installReviewPermission,
+	type ReviewDecision,
+	type ReviewPermissionRequest,
+} from "@pi-acp/acp/permission-bridge";
 import { formatToolContent, wrapStreamingBashOutput } from "@pi-acp/acp/translate/tool-content";
 import { unreachable } from "@pi-acp/acp/unreachable";
 import * as z from "zod";
@@ -40,6 +45,36 @@ export interface ToolArgs {
 	path?: string | undefined;
 	oldText?: string | undefined;
 	[key: string]: unknown;
+}
+
+function intendedNewText(toolName: string, args: ToolArgs, oldText: string): string | undefined {
+	if (toolName === "write" && typeof args["content"] === "string") return args["content"];
+	if (toolName === "edit") {
+		const edits = args["edits"];
+		if (Array.isArray(edits)) {
+			let next = oldText;
+			for (const edit of edits) {
+				if (
+					typeof edit !== "object" ||
+					edit === null ||
+					typeof (edit as { oldText?: unknown }).oldText !== "string" ||
+					typeof (edit as { newText?: unknown }).newText !== "string"
+				) {
+					return undefined;
+				}
+				const old = (edit as { oldText: string }).oldText;
+				const neu = (edit as { newText: string }).newText;
+				const at = next.indexOf(old);
+				if (at < 0) return undefined;
+				next = next.slice(0, at) + neu + next.slice(at + old.length);
+			}
+			return next;
+		}
+		if (typeof args.oldText === "string" && typeof args["newText"] === "string") {
+			return oldText.replace(args.oldText, args["newText"]);
+		}
+	}
+	return undefined;
 }
 
 export function resolveToolPath(
@@ -341,7 +376,7 @@ export class PiAcpSession {
 	private currentToolCalls = new Map<string, "pending" | "in_progress">();
 	/** Map of toolCallId -> toolName for streaming updates (Phase 5). */
 	private toolCallNames = new Map<string, string>();
-	private editSnapshots = new Map<string, { path: string; oldText: string }>();
+	private editSnapshots = new Map<string, { path: string; oldText: string; newText?: string }>();
 	private lastAssistantStopReason: string | null = null;
 	private lastEmit: Promise<void> = Promise.resolve();
 	private unsubscribe: (() => void) | undefined;
@@ -361,6 +396,39 @@ export class PiAcpSession {
 				? opts.diagnosticsReport
 				: null;
 		this.unsubscribe = this.piSession.subscribe((ev: AgentSessionEvent) => this.handlePiEvent(ev));
+		installReviewPermission((req) => this.requestReviewPermission(req));
+	}
+
+	async requestReviewPermission(req: ReviewPermissionRequest): Promise<ReviewDecision> {
+		const response = await this.conn.requestPermission({
+			sessionId: this.sessionId,
+			toolCall: {
+				toolCallId: req.toolCallId,
+				title: req.title,
+				kind: req.kind,
+				content: req.content as ToolCallContent[],
+			},
+			options: [
+				{ optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+				{ optionId: "reject-once", name: "Reject", kind: "reject_once" },
+				{
+					optionId: "allow-session-writes",
+					name: "Allow writes this session",
+					kind: "allow_always",
+				},
+			],
+		});
+		const outcome = response.outcome;
+		if (outcome.outcome === "cancelled") return "cancelled";
+		const optionId = outcome.optionId;
+		if (
+			optionId === "allow-once" ||
+			optionId === "reject-once" ||
+			optionId === "allow-session-writes"
+		) {
+			return optionId;
+		}
+		return "cancelled";
 	}
 
 	dispose(): void {
@@ -591,7 +659,13 @@ export class PiAcpSession {
 				} catch {
 					// File may not exist yet for write -- treat as empty.
 				}
-				this.editSnapshots.set(toolCallId, { path: abs, oldText });
+				const nextText = intendedNewText(toolName, args, oldText);
+				this.editSnapshots.set(
+					toolCallId,
+					nextText === undefined
+						? { path: abs, oldText }
+						: { path: abs, oldText, newText: nextText },
+				);
 				if (toolName === "edit") {
 					line = findUniqueLineNumber(oldText, args.oldText ?? "");
 				}
@@ -703,8 +777,14 @@ export class PiAcpSession {
 		// Diff path for edit/write
 		if (!isError && snapshot) {
 			try {
-				const newText = readFileSync(snapshot.path, "utf8");
-				if (newText !== snapshot.oldText) {
+				let newText = snapshot.newText;
+				try {
+					const onDisk = readFileSync(snapshot.path, "utf8");
+					if (onDisk !== snapshot.oldText) newText = onDisk;
+				} catch {
+					// ACP write may not have touched disk yet
+				}
+				if (newText !== undefined && newText !== snapshot.oldText) {
 					const formatted = formatToolContent(toolName, result, isError);
 					content = [
 						{ type: "diff", path: snapshot.path, oldText: snapshot.oldText, newText },
