@@ -1,6 +1,6 @@
 {
 	"name": "@josephjohncox/pi-acp",
-	"version": "0.18.0",
+	"version": "0.19.0",
 	"description": "Joseph fork of pi-acp: ACP adapter with Zed Review Changes write gating",
 	"license": "MIT",
 	"author": "josephjohncox",

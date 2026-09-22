@@ -1,3 +1,17 @@
+# [0.19.0](https://github.com/josephjohncox/pi-acp/compare/v0.18.0...v0.19.0) (2026-09-22)
+
+
+### Features
+
+* advertise Review/Yolo as Zed session modes ([7d340d7](https://github.com/josephjohncox/pi-acp/commit/7d340d7))
+* make Review/Yolo real in Zed: disk writes in Yolo, no overlay vs Review Changes, Review gates shell ([7c7ff70](https://github.com/josephjohncox/pi-acp/commit/7c7ff70))
+
+
+### Bug Fixes
+
+* access BUN_TEST via index signature for tsc ([bd2dc5a](https://github.com/josephjohncox/pi-acp/commit/bd2dc5a))
+* persist write-gate on daemon attach; setSessionMode is review/yolo only ([7c7ff70](https://github.com/josephjohncox/pi-acp/commit/7c7ff70))
+
 ## [0.17.1](https://github.com/victor-software-house/pi-acp/compare/v0.17.0...v0.17.1) (2026-05-19)
 
 
