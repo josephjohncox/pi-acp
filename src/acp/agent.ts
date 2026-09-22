@@ -209,7 +209,7 @@ export class PiAcpAgent implements ACPAgent {
 	private readonly disabledProviders = new Set<string>();
 	/** Overridable so tests never open ~/.pi/agent/auth.json. */
 	private createAuthStorage: () => AuthStorage = () => {
-		if (process.env.BUN_TEST === "1") {
+		if (process.env["BUN_TEST"] === "1") {
 			throw new Error("refusing AuthStorage.create() under bun test (would wipe ~/.pi/agent/auth.json)");
 		}
 		return AuthStorage.create();
