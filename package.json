@@ -28,10 +28,12 @@
 	"type": "module",
 	"main": "dist/index.mjs",
 	"bin": {
-		"pi-acp": "dist/index.mjs"
+		"pi-acp": "dist/index.mjs",
+		"pi-acp-install-daemon": "launch/install.sh"
 	},
 	"files": [
-		"dist"
+		"dist",
+		"launch"
 	],
 	"scripts": {
 		"dev": "bun src/index.ts",

@@ -1,0 +1,14 @@
+[Unit]
+Description=Joseph pi-acp ACP daemon
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=@BIN@ --daemon
+Restart=on-failure
+RestartSec=2
+Environment=HOME=@HOME@
+Environment=PATH=@PATH@
+
+[Install]
+WantedBy=default.target

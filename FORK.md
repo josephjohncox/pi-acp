@@ -16,7 +16,10 @@ Public-ready fork of [`victor-software-house/pi-acp`](https://github.com/victor-
 
 ## Publish
 
-Pushes to `main` run typecheck, tests, then semantic-release via npm Trusted Publisher (OIDC). Tag `v0.18.0` is the first public release; do not republish it.
+Pushes to `main` run typecheck, tests, then semantic-release via npm Trusted Publisher (OIDC).
+
+- `fix:` → patch tag. Do not overwrite existing tags.
+- First public line is `v0.18.0`. Next unused version wins; never `git tag -f`.
 
 ```bash
 bun install && bun run build && npm pack --dry-run
