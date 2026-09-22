@@ -28,12 +28,14 @@
  * before any tool turn can run.
  */
 
+import { randomUUID } from "node:crypto";
 import type { AgentSideConnection } from "@agentclientprotocol/sdk";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 
 export interface AcpBashOperationsDeps {
 	conn: AgentSideConnection;
 	getSessionId: () => string;
+	sessionAllowWrites: { current: boolean };
 }
 
 const POLL_INTERVAL_MS = 100;
@@ -47,6 +49,36 @@ export function createAcpBashOperations(deps: AcpBashOperationsDeps): BashOperat
 			const sessionId = getSessionId();
 			if (sessionId === "") {
 				throw new Error("pi-acp acp-bash: sessionId not yet bound");
+			}
+
+			if (!deps.sessionAllowWrites.current) {
+				const response = await conn.requestPermission({
+					sessionId,
+					toolCall: {
+						toolCallId: randomUUID(),
+						title: `Run ${command}`,
+						kind: "execute",
+						status: "pending",
+					},
+					options: [
+						{ optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+						{ optionId: "reject-once", name: "Reject", kind: "reject_once" },
+						{
+							optionId: "allow-session-writes",
+							name: "Allow this session",
+							kind: "allow_always",
+						},
+					],
+				});
+				const outcome = response.outcome;
+				if (outcome.outcome === "cancelled" || outcome.optionId === "reject-once") {
+					throw new Error("Command rejected in Zed review");
+				}
+				if (outcome.optionId === "allow-session-writes") {
+					deps.sessionAllowWrites.current = true;
+				} else if (outcome.optionId !== "allow-once") {
+					throw new Error("Command rejected in Zed review");
+				}
 			}
 
 			const env =

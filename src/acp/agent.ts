@@ -86,6 +86,7 @@ import {
 	type ToolArgs,
 	toToolArgs,
 	toToolKind,
+	type WriteMode,
 } from "@pi-acp/acp/session";
 import { extractUserMessageText } from "@pi-acp/acp/translate/pi-messages";
 import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt";
@@ -364,6 +365,8 @@ export class PiAcpAgent implements ACPAgent {
 		piSession: AgentSession;
 		cwd: string;
 		sessionFile: string | undefined;
+		sessionAllowWrites: { current: boolean };
+		writeModeHolder: { current: WriteMode };
 	}): void {
 		if (this.daemonContext === undefined) return;
 		this.daemonContext.sessionRegistry.register({
@@ -372,6 +375,8 @@ export class PiAcpAgent implements ACPAgent {
 			ownerConnectionId: this.connectionId,
 			cwd: input.cwd,
 			sessionFile: input.sessionFile,
+			sessionAllowWrites: input.sessionAllowWrites,
+			writeModeHolder: input.writeModeHolder,
 		});
 	}
 
@@ -545,6 +550,7 @@ export class PiAcpAgent implements ACPAgent {
 			const operations = createAcpBashOperations({
 				conn: this.conn,
 				getSessionId: () => sessionIdRef.current,
+				sessionAllowWrites,
 			});
 			const bashToolDef = createBashToolDefinition(cwd, {
 				operations,
@@ -680,13 +686,21 @@ export class PiAcpAgent implements ACPAgent {
 			piSession,
 			conn: this.conn,
 			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
+			useClientRead: this.clientCapabilities.fsReadTextFile,
 			cleanups: modeResult.ephemeral ? [modeResult.cleanup] : [],
 			sessionAllowWrites: acpToolOverlay.sessionAllowWrites,
 			...(diagnosticsReport !== "" ? { diagnosticsReport } : {}),
 		});
 
 		this.sessions.register(session);
-		this.registerWithDaemon({ sessionId, piSession, cwd: params.cwd, sessionFile });
+		this.registerWithDaemon({
+			sessionId,
+			piSession,
+			cwd: params.cwd,
+			sessionFile,
+			sessionAllowWrites: session.sessionAllowWrites,
+			writeModeHolder: session.writeModeHolder,
+		});
 
 		const thinking = buildThinkingModes(piSession);
 		const modes = buildWriteModes(session);
@@ -1031,6 +1045,7 @@ export class PiAcpAgent implements ACPAgent {
 			piSession,
 			conn: this.conn,
 			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
+			useClientRead: this.clientCapabilities.fsReadTextFile,
 			sessionAllowWrites: acpToolOverlay.sessionAllowWrites,
 		});
 
@@ -1040,6 +1055,8 @@ export class PiAcpAgent implements ACPAgent {
 			piSession,
 			cwd: params.cwd,
 			sessionFile,
+			sessionAllowWrites: session.sessionAllowWrites,
+			writeModeHolder: session.writeModeHolder,
 		});
 
 		await this.replaySessionHistory(session, piSession.messages);
@@ -1188,6 +1205,9 @@ export class PiAcpAgent implements ACPAgent {
 					piSession: attached.piSession,
 					conn: this.conn,
 					supportsTerminalOutput: this.clientCapabilities.terminalOutput,
+					useClientRead: this.clientCapabilities.fsReadTextFile,
+					sessionAllowWrites: attached.sessionAllowWrites,
+					writeModeHolder: attached.writeModeHolder,
 				});
 				this.sessions.register(session);
 				if (attached.sessionFile !== undefined) {
@@ -1244,6 +1264,7 @@ export class PiAcpAgent implements ACPAgent {
 			piSession,
 			conn: this.conn,
 			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
+			useClientRead: this.clientCapabilities.fsReadTextFile,
 			sessionAllowWrites: acpToolOverlay.sessionAllowWrites,
 		});
 
@@ -1254,6 +1275,8 @@ export class PiAcpAgent implements ACPAgent {
 			piSession,
 			cwd: params.cwd,
 			sessionFile,
+			sessionAllowWrites: session.sessionAllowWrites,
+			writeModeHolder: session.writeModeHolder,
 		});
 
 		const enableSkillCommands = skillCommandsEnabled(params.cwd);
@@ -1332,6 +1355,7 @@ export class PiAcpAgent implements ACPAgent {
 			piSession,
 			conn: this.conn,
 			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
+			useClientRead: this.clientCapabilities.fsReadTextFile,
 			sessionAllowWrites: acpToolOverlay.sessionAllowWrites,
 		});
 
@@ -1341,6 +1365,8 @@ export class PiAcpAgent implements ACPAgent {
 			piSession,
 			cwd: params.cwd,
 			sessionFile: newSessionFile,
+			sessionAllowWrites: session.sessionAllowWrites,
+			writeModeHolder: session.writeModeHolder,
 		});
 
 		const enableSkillCommands = skillCommandsEnabled(params.cwd);
@@ -1375,8 +1401,6 @@ export class PiAcpAgent implements ACPAgent {
 		const mode = String(params.modeId);
 		if (mode === "review" || mode === "yolo") {
 			session.setWriteMode(mode);
-		} else if (isThinkingLevel(mode)) {
-			session.piSession.setThinkingLevel(mode);
 		} else {
 			throw RequestError.invalidParams(`Unknown modeId: ${mode}`);
 		}

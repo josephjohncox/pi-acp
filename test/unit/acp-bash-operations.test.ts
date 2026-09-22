@@ -29,6 +29,7 @@ function makeStubConn(termOpts: StubTerminalOpts): {
 	creates: CreateCall[];
 	released: boolean;
 	killed: boolean;
+	perms: Array<{ title: string; optionId?: string }>;
 } {
 	const creates: CreateCall[] = [];
 	let snapIdx = 0;
@@ -44,7 +45,12 @@ function makeStubConn(termOpts: StubTerminalOpts): {
 		resolveExit({ exitCode: termOpts.exitCode });
 	}, termOpts.exitDelayMs ?? 50);
 
+	const perms: Array<{ title: string }> = [];
 	const conn = {
+		async requestPermission(params: { toolCall: { title: string } }) {
+			perms.push({ title: params.toolCall.title });
+			return { outcome: { outcome: "selected", optionId: "allow-once" } };
+		},
 		async createTerminal(params: CreateCall) {
 			creates.push(params);
 			return {
@@ -89,13 +95,22 @@ function makeStubConn(termOpts: StubTerminalOpts): {
 		get killed() {
 			return killed;
 		},
+		perms,
 	};
+}
+
+function yoloOps(conn: Parameters<typeof createAcpBashOperations>[0]["conn"], sessionId = "s") {
+	return createAcpBashOperations({
+		conn,
+		getSessionId: () => sessionId,
+		sessionAllowWrites: { current: true },
+	});
 }
 
 describe("createAcpBashOperations.exec", () => {
 	test("wraps command in /bin/sh -c and routes through createTerminal", async () => {
 		const stub = makeStubConn({ outputs: ["hello\n"], exitCode: 0 });
-		const ops = createAcpBashOperations({ conn: stub.conn, getSessionId: () => "sess-1" });
+		const ops = yoloOps(stub.conn, "sess-1");
 		const chunks: Buffer[] = [];
 		const result = await ops.exec("echo hello", "/tmp", {
 			onData: (b) => {
@@ -112,7 +127,11 @@ describe("createAcpBashOperations.exec", () => {
 
 	test("throws when sessionId unbound", async () => {
 		const stub = makeStubConn({ outputs: [""], exitCode: 0 });
-		const ops = createAcpBashOperations({ conn: stub.conn, getSessionId: () => "" });
+		const ops = createAcpBashOperations({
+			conn: stub.conn,
+			getSessionId: () => "",
+			sessionAllowWrites: { current: true },
+		});
 		await expect(ops.exec("echo x", "/tmp", { onData: () => {} })).rejects.toThrow(
 			/sessionId not yet bound/,
 		);
@@ -124,7 +143,7 @@ describe("createAcpBashOperations.exec", () => {
 			exitCode: 0,
 			exitDelayMs: 250,
 		});
-		const ops = createAcpBashOperations({ conn: stub.conn, getSessionId: () => "s" });
+		const ops = yoloOps(stub.conn);
 		const chunks: string[] = [];
 		const result = await ops.exec("seq 3", "/tmp", {
 			onData: (b) => {
@@ -138,7 +157,7 @@ describe("createAcpBashOperations.exec", () => {
 
 	test("propagates env as ACP EnvVariable[]", async () => {
 		const stub = makeStubConn({ outputs: [""], exitCode: 0 });
-		const ops = createAcpBashOperations({ conn: stub.conn, getSessionId: () => "s" });
+		const ops = yoloOps(stub.conn);
 		await ops.exec("echo $X", "/tmp", {
 			onData: () => {},
 			env: { X: "1", Y: "two" },
@@ -154,7 +173,7 @@ describe("createAcpBashOperations.exec", () => {
 
 	test("kills terminal on AbortSignal", async () => {
 		const stub = makeStubConn({ outputs: [""], exitCode: null, exitDelayMs: 5000 });
-		const ops = createAcpBashOperations({ conn: stub.conn, getSessionId: () => "s" });
+		const ops = yoloOps(stub.conn);
 		const ctrl = new AbortController();
 		setTimeout(() => ctrl.abort(), 30);
 		const result = await ops.exec("sleep 5", "/tmp", {
@@ -168,7 +187,7 @@ describe("createAcpBashOperations.exec", () => {
 
 	test("times out and kills terminal when options.timeout exceeded", async () => {
 		const stub = makeStubConn({ outputs: [""], exitCode: null, exitDelayMs: 5000 });
-		const ops = createAcpBashOperations({ conn: stub.conn, getSessionId: () => "s" });
+		const ops = yoloOps(stub.conn);
 		await ops.exec("sleep 5", "/tmp", {
 			onData: () => {},
 			timeout: 50,
@@ -179,8 +198,28 @@ describe("createAcpBashOperations.exec", () => {
 
 	test("always releases terminal in finally branch (even on early exit)", async () => {
 		const stub = makeStubConn({ outputs: [""], exitCode: 0 });
-		const ops = createAcpBashOperations({ conn: stub.conn, getSessionId: () => "s" });
+		const ops = yoloOps(stub.conn);
 		await ops.exec("true", "/tmp", { onData: () => {} });
 		expect(stub.released).toBe(true);
+	});
+
+	test("Review asks permission before createTerminal", async () => {
+		const stub = makeStubConn({ outputs: ["ok\n"], exitCode: 0 });
+		const ops = createAcpBashOperations({
+			conn: stub.conn,
+			getSessionId: () => "s",
+			sessionAllowWrites: { current: false },
+		});
+		await ops.exec("rm -rf /", "/tmp", { onData: () => {} });
+		expect(stub.perms.map((p) => p.title)).toEqual(["Run rm -rf /"]);
+		expect(stub.creates).toHaveLength(1);
+	});
+
+	test("Yolo skips permission", async () => {
+		const stub = makeStubConn({ outputs: [""], exitCode: 0 });
+		const ops = yoloOps(stub.conn);
+		await ops.exec("ls", "/tmp", { onData: () => {} });
+		expect(stub.perms).toEqual([]);
+		expect(stub.creates).toHaveLength(1);
 	});
 });

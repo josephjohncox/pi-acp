@@ -85,6 +85,21 @@ describe("SessionRegistry", () => {
 		expect(ownedByA.map((e) => e.sessionId).sort()).toEqual(["s1", "s2"]);
 	});
 
+	test("preserves write-gate refs across attach", () => {
+		const r = createSessionRegistry();
+		const sessionAllowWrites = { current: true };
+		const writeModeHolder = { current: "yolo" as const };
+		r.register({
+			...stubSession("s1"),
+			sessionAllowWrites,
+			writeModeHolder,
+		});
+		const attached = r.attach("s1", "conn-B");
+		expect(attached?.sessionAllowWrites).toBe(sessionAllowWrites);
+		expect(attached?.writeModeHolder).toBe(writeModeHolder);
+		expect(attached?.writeModeHolder.current).toBe("yolo");
+	});
+
 	test("listAll returns everything", () => {
 		const r = createSessionRegistry();
 		r.register(stubSession("s1"));

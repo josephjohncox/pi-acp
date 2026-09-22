@@ -120,8 +120,8 @@ Leave `enable_all_context_servers` false unless you intend every Zed MCP to land
 
 In a live pi-acp thread, the session mode picker is **Review** (default) or **Yolo**.
 
-- Review: edits land as Review Changes hunks (`single_file_review` must be on).
-- Yolo: writes for the rest of that thread without asking.
+- Review: edits land as Review Changes hunks (`single_file_review` must be on). Shell asks first.
+- Yolo: writes hit disk for the rest of that thread. Zed has no accept-all-hunks RPC.
 
 Thinking depth is a **config option**, not a session mode.
 

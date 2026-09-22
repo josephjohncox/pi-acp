@@ -65,11 +65,7 @@ export function createGatedFsOperations(deps: AcpWriteOperationsDeps): {
 	edit: EditOperations;
 	write: WriteOperations;
 } {
-	const overlay = new Map<string, string>();
-
 	const readUtf8 = async (absolutePath: string): Promise<string> => {
-		const cached = overlay.get(absolutePath);
-		if (cached !== undefined) return cached;
 		if (deps.useClientRead) {
 			const sessionId = deps.getSessionId();
 			if (sessionId === "") throw new Error("ACP session is not bound; refusing to read");
@@ -79,27 +75,34 @@ export function createGatedFsOperations(deps: AcpWriteOperationsDeps): {
 		return await readFile(absolutePath, "utf8");
 	};
 
+	const writeDisk = async (absolutePath: string, content: string): Promise<void> => {
+		await mkdir(dirname(absolutePath), { recursive: true });
+		await writeFile(absolutePath, content, "utf8");
+	};
+
 	const apply = async (absolutePath: string, content: string): Promise<void> => {
 		const sessionId = deps.getSessionId();
 		if (sessionId === "") {
 			throw new Error("ACP session is not bound; refusing to write");
 		}
+		// Yolo: disk only. Zed has no "accept all hunks" RPC.
+		if (deps.sessionAllowWrites.current) {
+			await writeDisk(absolutePath, content);
+			return;
+		}
 		if (deps.useClientWrite) {
+			// Do not cache proposed text. Rejected/edited hunks live in Zed.
 			await deps.conn.writeTextFile({ sessionId, path: absolutePath, content });
-			overlay.set(absolutePath, content);
 			return;
 		}
 		await decideNodeWrite(deps, absolutePath, content);
-		await mkdir(dirname(absolutePath), { recursive: true });
-		await writeFile(absolutePath, content, "utf8");
-		overlay.set(absolutePath, content);
+		await writeDisk(absolutePath, content);
 	};
 
 	return {
 		edit: {
 			readFile: async (absolutePath) => Buffer.from(await readUtf8(absolutePath), "utf8"),
 			access: async (absolutePath) => {
-				if (overlay.has(absolutePath)) return;
 				if (deps.useClientRead) {
 					await readUtf8(absolutePath);
 					return;

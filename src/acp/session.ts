@@ -354,7 +354,9 @@ export interface PiAcpSessionOpts {
 	supportsTerminalOutput?: boolean | undefined;
 	/** Shared with gated edit/write tools. */
 	sessionAllowWrites?: { current: boolean };
+	writeModeHolder?: { current: WriteMode };
 	writeMode?: WriteMode;
+	useClientRead?: boolean;
 	/**
 	 * Best-effort cleanup callbacks run at session dispose. PRD-002 §FR-5
 	 * `none` mode passes a tmpdir rmSync here. Callbacks must not throw
@@ -376,7 +378,12 @@ export class PiAcpSession {
 	readonly piSession: AgentSession;
 	readonly supportsTerminalOutput: boolean;
 	readonly sessionAllowWrites: { current: boolean };
-	writeMode: WriteMode;
+	readonly writeModeHolder: { current: WriteMode };
+	readonly useClientRead: boolean;
+
+	get writeMode(): WriteMode {
+		return this.writeModeHolder.current;
+	}
 
 	private readonly conn: AgentSideConnection;
 
@@ -396,6 +403,7 @@ export class PiAcpSession {
 	/** Map of toolCallId -> toolName for streaming updates (Phase 5). */
 	private toolCallNames = new Map<string, string>();
 	private editSnapshots = new Map<string, { path: string; oldText: string; newText?: string }>();
+	private editSnapshotReady = new Map<string, Promise<void>>();
 	private lastAssistantStopReason: string | null = null;
 	private lastEmit: Promise<void> = Promise.resolve();
 	private unsubscribe: (() => void) | undefined;
@@ -409,9 +417,13 @@ export class PiAcpSession {
 		this.piSession = opts.piSession;
 		this.conn = opts.conn;
 		this.supportsTerminalOutput = opts.supportsTerminalOutput ?? false;
+		this.useClientRead = opts.useClientRead ?? false;
 		this.sessionAllowWrites = opts.sessionAllowWrites ?? { current: false };
-		this.writeMode = opts.writeMode ?? "review";
-		this.sessionAllowWrites.current = this.writeMode === "yolo";
+		this.writeModeHolder =
+			opts.writeModeHolder ?? { current: opts.writeMode ?? "review" };
+		if (opts.sessionAllowWrites === undefined) {
+			this.sessionAllowWrites.current = this.writeModeHolder.current === "yolo";
+		}
 		this.cleanups = opts.cleanups ?? [];
 		this.pendingDiagnosticsReport =
 			opts.diagnosticsReport !== undefined && opts.diagnosticsReport !== ""
@@ -422,7 +434,7 @@ export class PiAcpSession {
 	}
 
 	setWriteMode(mode: WriteMode): void {
-		this.writeMode = mode;
+		this.writeModeHolder.current = mode;
 		this.sessionAllowWrites.current = mode === "yolo";
 	}
 
@@ -671,93 +683,108 @@ export class PiAcpSession {
 		}
 	}
 
-	private handleToolStart(toolCallId: string, toolName: string, args: ToolArgs): void {
-		// Track toolName for streaming updates (Phase 5)
-		this.toolCallNames.set(toolCallId, toolName);
-
-		let line: number | undefined;
-
-		if ((toolName === "edit" || toolName === "write") && args.path !== undefined) {
-			try {
-				const abs = isAbsolute(args.path) ? args.path : resolvePath(this.cwd, args.path);
-				let oldText = "";
-				try {
-					oldText = readFileSync(abs, "utf8");
-				} catch {
-					// File may not exist yet for write -- treat as empty.
-				}
-				const nextText = intendedNewText(toolName, args, oldText);
-				this.editSnapshots.set(
-					toolCallId,
-					nextText === undefined
-						? { path: abs, oldText }
-						: { path: abs, oldText, newText: nextText },
-				);
-				if (toolName === "edit") {
-					line = findUniqueLineNumber(oldText, args.oldText ?? "");
-				}
-			} catch {
-				// snapshot failure is non-fatal
-			}
+	private async readBufferText(abs: string): Promise<string> {
+		if (this.useClientRead) {
+			const response = await this.conn.readTextFile({
+				sessionId: this.sessionId,
+				path: abs,
+			});
+			return response.content;
 		}
-
-		const locations = resolveToolPath(args, this.cwd, line);
-
-		// Build terminal metadata for bash/tmux when client supports it
-		const terminalMeta =
-			this.supportsTerminalOutput && isTerminalTool(toolName)
-				? { terminal_info: { terminal_id: toolCallId, cwd: this.cwd } }
-				: undefined;
-		const meta = buildToolMeta(toolName, terminalMeta);
-
-		// Build content for terminal-aware clients
-		const terminalContent: ToolCallContent[] | undefined =
-			this.supportsTerminalOutput && isTerminalTool(toolName)
-				? [{ type: "terminal" as const, terminalId: toolCallId }]
-				: undefined;
-
-		if (!this.currentToolCalls.has(toolCallId)) {
-			this.currentToolCalls.set(toolCallId, "in_progress");
-			this.emit({
-				sessionUpdate: "tool_call",
-				toolCallId,
-				title: buildToolTitle(toolName, args),
-				kind: toToolKind(toolName),
-				status: "in_progress",
-				...(locations ? { locations } : {}),
-				...(terminalContent !== undefined ? { content: terminalContent } : {}),
-				rawInput: args,
-				_meta: meta,
-			});
-		} else {
-			this.currentToolCalls.set(toolCallId, "in_progress");
-			this.emit({
-				sessionUpdate: "tool_call_update",
-				toolCallId,
-				title: buildToolTitle(toolName, args),
-				status: "in_progress",
-				...(locations ? { locations } : {}),
-				...(terminalContent !== undefined ? { content: terminalContent } : {}),
-				rawInput: args,
-				_meta: meta,
-			});
+		try {
+			return readFileSync(abs, "utf8");
+		} catch {
+			return "";
 		}
 	}
 
+	private async captureEditSnapshot(
+		toolCallId: string,
+		toolName: string,
+		args: ToolArgs,
+	): Promise<void> {
+		const pathArg = args.path;
+		if (pathArg === undefined) return;
+		try {
+			const abs = isAbsolute(pathArg) ? pathArg : resolvePath(this.cwd, pathArg);
+			const oldText = await this.readBufferText(abs);
+			const nextText = intendedNewText(toolName, args, oldText);
+			this.editSnapshots.set(
+				toolCallId,
+				nextText === undefined ? { path: abs, oldText } : { path: abs, oldText, newText: nextText },
+			);
+		} catch {
+			// snapshot failure is non-fatal
+		}
+	}
+
+	private handleToolStart(toolCallId: string, toolName: string, args: ToolArgs): void {
+		this.toolCallNames.set(toolCallId, toolName);
+
+		const ready =
+			(toolName === "edit" || toolName === "write") && args.path !== undefined
+				? this.captureEditSnapshot(toolCallId, toolName, args)
+				: Promise.resolve();
+		this.editSnapshotReady.set(toolCallId, ready);
+
+		this.lastEmit = this.lastEmit.then(async () => {
+			await ready;
+			const snap = this.editSnapshots.get(toolCallId);
+			const line =
+				toolName === "edit" && snap !== undefined
+					? findUniqueLineNumber(snap.oldText, args.oldText ?? "")
+					: undefined;
+			const locations = resolveToolPath(args, this.cwd, line);
+			const meta = buildToolMeta(toolName);
+			if (!this.currentToolCalls.has(toolCallId)) {
+				this.currentToolCalls.set(toolCallId, "in_progress");
+				await this.conn.sessionUpdate({
+					sessionId: this.sessionId,
+					update: {
+						sessionUpdate: "tool_call",
+						toolCallId,
+						title: buildToolTitle(toolName, args),
+						kind: toToolKind(toolName),
+						status: "in_progress",
+						...(locations ? { locations } : {}),
+						rawInput: args,
+						_meta: meta,
+					},
+				});
+			} else {
+				this.currentToolCalls.set(toolCallId, "in_progress");
+				await this.conn.sessionUpdate({
+					sessionId: this.sessionId,
+					update: {
+						sessionUpdate: "tool_call_update",
+						toolCallId,
+						title: buildToolTitle(toolName, args),
+						status: "in_progress",
+						...(locations ? { locations } : {}),
+						rawInput: args,
+						_meta: meta,
+					},
+				});
+			}
+		}).catch(() => {});
+	}
+
 	private handleToolUpdate(toolCallId: string, toolName: string, partialResult: unknown): void {
-		// Look up tool name from our map (Phase 5), fall back to event's toolName
 		const name = this.toolCallNames.get(toolCallId) ?? toolName;
 
-		if (this.supportsTerminalOutput && isTerminalTool(name)) {
-			// Terminal-aware path: emit only _meta.terminal_output, no content
+		if (isTerminalTool(name)) {
 			const text = extractStreamingText(partialResult);
+			const wrapped = wrapStreamingBashOutput(text);
 			this.emit({
 				sessionUpdate: "tool_call_update",
 				toolCallId,
 				status: "in_progress",
-				_meta: buildToolMeta(name, {
-					terminal_output: { terminal_id: toolCallId, data: text },
-				}),
+				content: wrapped
+					? ([
+							{ type: "content", content: { type: "text", text: wrapped } },
+						] satisfies ToolCallContent[])
+					: null,
+				_meta: buildToolMeta(name),
 				rawOutput: partialResult,
 			});
 		} else if (isTerminalTool(name)) {
@@ -798,87 +825,65 @@ export class PiAcpSession {
 		result: unknown,
 		isError: boolean,
 	): void {
-		const snapshot = this.editSnapshots.get(toolCallId);
-		let content: ToolCallContent[] | null = null;
+		const ready = this.editSnapshotReady.get(toolCallId) ?? Promise.resolve();
+		this.lastEmit = this.lastEmit
+			.then(async () => {
+				await ready;
+				const snapshot = this.editSnapshots.get(toolCallId);
+				let content: ToolCallContent[] | null = null;
 
-		// Diff path for edit/write
-		if (!isError && snapshot) {
-			try {
-				let newText = snapshot.newText;
-				try {
-					const onDisk = readFileSync(snapshot.path, "utf8");
-					if (onDisk !== snapshot.oldText) newText = onDisk;
-				} catch {
-					// ACP write may not have touched disk yet
-				}
-				if (newText !== undefined && newText !== snapshot.oldText) {
-					const formatted = formatToolContent(toolName, result, isError);
-					content = [
-						{ type: "diff", path: snapshot.path, oldText: snapshot.oldText, newText },
-						...formatted,
-					];
-				}
-			} catch {
-				// fall back to formatted content
-			}
-		}
-
-		// If no diff content, use formatted tool content
-		if (content === null) {
-			const formatted = formatToolContent(toolName, result, isError);
-			content = formatted.length > 0 ? formatted : null;
-		}
-
-		// Last resort: if formatToolContent returns empty and no diff, generate plain text
-		if (content === null && !isError && toolName !== "edit" && toolName !== "write") {
-			const text = extractStreamingText(result);
-			if (text) {
-				content = [{ type: "content", content: { type: "text", text } }];
-			}
-		}
-
-		// For terminal tools: emit a separate terminal_output update before terminal_exit.
-		// This ensures Zed renders output before the exit status (following claude-agent-acp).
-		if (this.supportsTerminalOutput && isTerminalTool(toolName)) {
-			const outputText = extractStreamingText(result);
-			if (outputText !== "") {
-				this.emit({
-					sessionUpdate: "tool_call_update",
-					toolCallId,
-					status: "in_progress",
-					_meta: buildToolMeta(toolName, {
-						terminal_output: { terminal_id: toolCallId, data: outputText },
-					}),
-					rawOutput: result,
-				});
-			}
-		}
-
-		// Build terminal exit metadata for bash/tmux
-		const terminalExitMeta =
-			this.supportsTerminalOutput && isTerminalTool(toolName)
-				? {
-						terminal_exit: {
-							terminal_id: toolCallId,
-							exit_code: extractExitCode(result),
-							signal: null,
-						},
+				if (!isError && snapshot) {
+					try {
+						let newText = snapshot.newText;
+						try {
+							const latest = await this.readBufferText(snapshot.path);
+							if (latest !== snapshot.oldText) newText = latest;
+						} catch {
+							// Review write may not have landed in the buffer yet.
+						}
+						if (newText !== undefined && newText !== snapshot.oldText) {
+							const formatted = formatToolContent(toolName, result, isError);
+							content = [
+								{ type: "diff", path: snapshot.path, oldText: snapshot.oldText, newText },
+								...formatted,
+							];
+						}
+					} catch {
+						// fall back to formatted content
 					}
-				: undefined;
-		const meta = buildToolMeta(toolName, terminalExitMeta);
+				}
 
-		this.emit({
-			sessionUpdate: "tool_call_update",
-			toolCallId,
-			status: isError ? "failed" : "completed",
-			content,
-			_meta: meta,
-			rawOutput: result,
-		});
+				if (content === null) {
+					const formatted = formatToolContent(toolName, result, isError);
+					content = formatted.length > 0 ? formatted : null;
+				}
 
-		this.currentToolCalls.delete(toolCallId);
-		this.editSnapshots.delete(toolCallId);
-		this.toolCallNames.delete(toolCallId);
+				if (content === null && !isError && toolName !== "edit" && toolName !== "write") {
+					const text = extractStreamingText(result);
+					if (text) {
+						content = [{ type: "content", content: { type: "text", text } }];
+					}
+				}
+
+				await this.conn.sessionUpdate({
+					sessionId: this.sessionId,
+					update: {
+						sessionUpdate: "tool_call_update",
+						toolCallId,
+						status: isError ? "failed" : "completed",
+						content,
+						_meta: buildToolMeta(toolName),
+						rawOutput: result,
+					},
+				});
+			})
+			.catch(() => {})
+			.finally(() => {
+				this.currentToolCalls.delete(toolCallId);
+				this.editSnapshots.delete(toolCallId);
+				this.editSnapshotReady.delete(toolCallId);
+				this.toolCallNames.delete(toolCallId);
+			});
 	}
 
 	private handleAgentEnd(): void {

@@ -6,6 +6,8 @@
 
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
+export type WriteMode = "review" | "yolo";
+
 export interface SessionEntry {
 	sessionId: string;
 	piSession: AgentSession;
@@ -14,6 +16,8 @@ export interface SessionEntry {
 	cwd: string;
 	sessionFile: string | undefined;
 	updatedAt: Date;
+	sessionAllowWrites: { current: boolean };
+	writeModeHolder: { current: WriteMode };
 }
 
 export interface SessionRegistry {
@@ -31,6 +35,8 @@ export interface NewSessionEntry {
 	ownerConnectionId: string;
 	cwd: string;
 	sessionFile: string | undefined;
+	sessionAllowWrites?: { current: boolean };
+	writeModeHolder?: { current: WriteMode };
 }
 
 export type ReleaseResult =
@@ -51,6 +57,8 @@ export function createSessionRegistry(): SessionRegistry {
 				cwd: input.cwd,
 				sessionFile: input.sessionFile,
 				updatedAt: new Date(),
+				sessionAllowWrites: input.sessionAllowWrites ?? { current: false },
+				writeModeHolder: input.writeModeHolder ?? { current: "review" },
 			};
 			map.set(input.sessionId, entry);
 		},

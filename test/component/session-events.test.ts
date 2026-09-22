@@ -17,7 +17,7 @@ function createSession(opts?: { cwd?: string; supportsTerminalOutput?: boolean }
 	return { session, conn, piSession };
 }
 
-const tick = () => new Promise((r) => setTimeout(r, 0));
+const tick = () => new Promise((r) => setTimeout(r, 15));
 
 type R = Record<string, unknown>;
 
@@ -203,7 +203,7 @@ describe("tool output formatting (Phase 1)", () => {
 // ---------------------------------------------------------------------------
 
 describe("terminal content lifecycle (Phase 2)", () => {
-	test("emits terminal_info on tool_call when terminal supported", async () => {
+	test("does not embed a fake terminal id on bash tool_call", async () => {
 		const { conn, piSession } = createSession({ supportsTerminalOutput: true });
 
 		piSession.emit({
@@ -216,21 +216,13 @@ describe("terminal content lifecycle (Phase 2)", () => {
 
 		const update = conn.updates[0]?.update as R;
 		expect(update["sessionUpdate"]).toBe("tool_call");
-		expect(update["_meta"]).toBeDefined();
-
+		expect(update["content"]).toBeUndefined();
 		const meta = update["_meta"] as R;
-		expect(meta["terminal_info"]).toEqual({
-			terminal_id: "t1",
-			cwd: process.cwd(),
-		});
-
-		// content should include terminal type
-		const content = update["content"] as R[];
-		expect(content).toBeDefined();
-		expect(content[0]).toEqual({ type: "terminal", terminalId: "t1" });
+		expect(meta["terminal_info"]).toBeUndefined();
+		expect(meta["piAcp"]).toEqual({ toolName: "bash" });
 	});
 
-	test("emits terminal_output on tool_call_update when terminal supported", async () => {
+	test("streams bash as fenced console even when terminal _meta is advertised", async () => {
 		const { conn, piSession } = createSession({ supportsTerminalOutput: true });
 
 		piSession.emit({
@@ -250,18 +242,13 @@ describe("terminal content lifecycle (Phase 2)", () => {
 
 		const update = conn.updates[1]?.update as R;
 		expect(update["sessionUpdate"]).toBe("tool_call_update");
-
-		const meta = update["_meta"] as R;
-		expect(meta["terminal_output"]).toEqual({
-			terminal_id: "t1",
-			data: "streaming...",
-		});
-
-		// No content field when terminal output is present
-		expect(update["content"]).toBeUndefined();
+		const content = update["content"] as R[];
+		const inner = (content[0]?.["content"] as R)["text"];
+		expect(inner).toBe("```console\nstreaming...\n```");
+		expect((update["_meta"] as R)["terminal_output"]).toBeUndefined();
 	});
 
-	test("emits separate terminal_output then terminal_exit on tool end", async () => {
+	test("completes bash without fake terminal_exit", async () => {
 		const { conn, piSession } = createSession({ supportsTerminalOutput: true });
 
 		piSession.emit({
@@ -279,39 +266,14 @@ describe("terminal content lifecycle (Phase 2)", () => {
 		} as never);
 		await tick();
 
-		// Find the terminal_output notification (emitted before terminal_exit)
-		const outputUpdate = conn.updates.find((u) => {
-			if (u.update.sessionUpdate !== "tool_call_update") return false;
-			const meta = (u.update as R)["_meta"] as R | undefined;
-			return meta?.["terminal_output"] !== undefined;
-		});
-		expect(outputUpdate).toBeDefined();
-		const outputMeta = (outputUpdate?.update as R)["_meta"] as R;
-		expect(outputMeta["terminal_output"]).toEqual({
-			terminal_id: "t1",
-			data: "done",
-		});
-		expect((outputUpdate?.update as R)["status"]).toBe("in_progress");
-
-		// Find the terminal_exit notification (final status)
-		const exitUpdate = conn.updates.find((u) => {
-			if (u.update.sessionUpdate !== "tool_call_update") return false;
-			const meta = (u.update as R)["_meta"] as R | undefined;
-			return meta?.["terminal_exit"] !== undefined;
-		});
-		expect(exitUpdate).toBeDefined();
-		const exitMeta = (exitUpdate?.update as R)["_meta"] as R;
-		expect(exitMeta["terminal_exit"]).toEqual({
-			terminal_id: "t1",
-			exit_code: 0,
-			signal: null,
-		});
-		expect((exitUpdate?.update as R)["status"]).toBe("completed");
-
-		// Verify terminal_output comes before terminal_exit
-		const outputIdx = conn.updates.indexOf(outputUpdate!);
-		const exitIdx = conn.updates.indexOf(exitUpdate!);
-		expect(outputIdx).toBeLessThan(exitIdx);
+		const completed = conn.updates.find(
+			(u) =>
+				u.update.sessionUpdate === "tool_call_update" && (u.update as R)["status"] === "completed",
+		);
+		expect(completed).toBeDefined();
+		const meta = (completed?.update as R)["_meta"] as R;
+		expect(meta["terminal_exit"]).toBeUndefined();
+		expect(meta["piAcp"]).toEqual({ toolName: "bash" });
 	});
 
 	test("falls back to code fences without terminal support", async () => {
@@ -454,7 +416,7 @@ describe("_meta.piAcp.toolName (Phase 3)", () => {
 		expect(meta["piAcp"]).toEqual({ toolName: "bash" });
 	});
 
-	test("_meta merges correctly with terminal _meta", async () => {
+	test("_meta stays piAcp-only for bash", async () => {
 		const { conn, piSession } = createSession({ supportsTerminalOutput: true });
 
 		piSession.emit({
@@ -467,13 +429,8 @@ describe("_meta.piAcp.toolName (Phase 3)", () => {
 
 		const update = conn.updates[0]?.update as R;
 		const meta = update["_meta"] as R;
-
-		// Both piAcp and terminal_info should be present
 		expect(meta["piAcp"]).toEqual({ toolName: "bash" });
-		expect(meta["terminal_info"]).toEqual({
-			terminal_id: "t1",
-			cwd: process.cwd(),
-		});
+		expect(meta["terminal_info"]).toBeUndefined();
 	});
 });
 
@@ -507,7 +464,7 @@ describe("streaming bash formatting (Phase 5)", () => {
 		expect(inner).toBe("```console\naccumulated output\n```");
 	});
 
-	test("bash streaming emits terminal_output with terminal support", async () => {
+	test("bash streaming stays fenced with terminal support advertised", async () => {
 		const { conn, piSession } = createSession({ supportsTerminalOutput: true });
 
 		piSession.emit({
@@ -526,13 +483,10 @@ describe("streaming bash formatting (Phase 5)", () => {
 		await tick();
 
 		const update = conn.updates[1]?.update as R;
-		const meta = update["_meta"] as R;
-		expect(meta["terminal_output"]).toEqual({
-			terminal_id: "t1",
-			data: "streaming data",
-		});
-		// No content in terminal mode
-		expect(update["content"]).toBeUndefined();
+		const content = update["content"] as R[];
+		const inner = (content[0]?.["content"] as R)["text"];
+		expect(inner).toBe("```console\nstreaming data\n```");
+		expect((update["_meta"] as R)["terminal_output"]).toBeUndefined();
 	});
 
 	test("non-bash streaming remains plain text", async () => {
