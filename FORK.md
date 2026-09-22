@@ -10,17 +10,13 @@ Public-ready fork of [`victor-software-house/pi-acp`](https://github.com/victor-
 
 - `edit` / `write` use Zed `fs/write_text_file` when the client advertises it (Review Changes / buffer hunks).
 - Otherwise a permission card, then a local disk write.
+- Session modes are **Review** (default) and **Yolo**. Thinking level stays a config option.
+- `read` uses Zed `fs/read_text_file` so the editor can follow along; directory probes do not open buffers.
 - Write/shell tools can raise `session/request_permission`.
 
 ## Publish
 
-CI on `main` typechecks, lints, and tests. **npm publish is `workflow_dispatch` only** until a trusted publisher exists.
-
-To publish to npmjs:
-
-1. `npm login` as a user who can own `@josephjohncox/pi-acp`.
-2. npm → Trusted Publisher → GitHub Actions → `josephjohncox/pi-acp` / workflow `Release`.
-3. Run the `Release` workflow (or push a conventional commit to `main` after enabling the release step).
+Pushes to `main` run typecheck, tests, then semantic-release via npm Trusted Publisher (OIDC). Tag `v0.18.0` is the first public release; do not republish it.
 
 ```bash
 bun install && bun run build && npm pack --dry-run

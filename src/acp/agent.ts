@@ -505,6 +505,7 @@ export class PiAcpAgent implements ACPAgent {
 	 */
 	private buildAcpToolOverlay(cwd: string): {
 		sessionIdRef: { current: string };
+		sessionAllowWrites: { current: boolean };
 		tools: string[];
 		customTools: ToolDefinition[];
 	} {
@@ -553,6 +554,7 @@ export class PiAcpAgent implements ACPAgent {
 
 		return {
 			sessionIdRef,
+			sessionAllowWrites,
 			tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
 			customTools,
 		};
@@ -679,15 +681,17 @@ export class PiAcpAgent implements ACPAgent {
 			conn: this.conn,
 			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
 			cleanups: modeResult.ephemeral ? [modeResult.cleanup] : [],
+			sessionAllowWrites: acpToolOverlay.sessionAllowWrites,
 			...(diagnosticsReport !== "" ? { diagnosticsReport } : {}),
 		});
 
 		this.sessions.register(session);
 		this.registerWithDaemon({ sessionId, piSession, cwd: params.cwd, sessionFile });
 
-		const modes = buildThinkingModes(piSession);
+		const thinking = buildThinkingModes(piSession);
+		const modes = buildWriteModes(session);
 		const models = buildModelState(piSession);
-		const configOptions = buildConfigOptions(modes, models);
+		const configOptions = buildConfigOptions(thinking, models);
 
 		const enableSkillCommands = skillCommandsEnabled(params.cwd);
 		setTimeout(() => {
@@ -1027,6 +1031,7 @@ export class PiAcpAgent implements ACPAgent {
 			piSession,
 			conn: this.conn,
 			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
+			sessionAllowWrites: acpToolOverlay.sessionAllowWrites,
 		});
 
 		this.sessions.register(session);
@@ -1039,9 +1044,10 @@ export class PiAcpAgent implements ACPAgent {
 
 		await this.replaySessionHistory(session, piSession.messages);
 
-		const modes = buildThinkingModes(piSession);
+		const thinking = buildThinkingModes(piSession);
+		const modes = buildWriteModes(session);
 		const models = buildModelState(piSession);
-		const configOptions = buildConfigOptions(modes, models);
+		const configOptions = buildConfigOptions(thinking, models);
 
 		const enableSkillCommands = skillCommandsEnabled(params.cwd);
 		setTimeout(() => {
@@ -1158,10 +1164,11 @@ export class PiAcpAgent implements ACPAgent {
 		// If the session is already live in THIS connection, reuse it.
 		const existing = this.sessions.maybeGet(params.sessionId);
 		if (existing !== undefined) {
-			const modes = buildThinkingModes(existing.piSession);
+			const thinking = buildThinkingModes(existing.piSession);
+			const modes = buildWriteModes(existing);
 			const models = buildModelState(existing.piSession);
 			return {
-				configOptions: buildConfigOptions(modes, models),
+				configOptions: buildConfigOptions(thinking, models),
 				modes,
 				models,
 			};
@@ -1186,10 +1193,11 @@ export class PiAcpAgent implements ACPAgent {
 				if (attached.sessionFile !== undefined) {
 					this.sessionPaths.set(params.sessionId, attached.sessionFile);
 				}
-				const modes = buildThinkingModes(attached.piSession);
+				const thinking = buildThinkingModes(attached.piSession);
+				const modes = buildWriteModes(session);
 				const models = buildModelState(attached.piSession);
 				return {
-					configOptions: buildConfigOptions(modes, models),
+					configOptions: buildConfigOptions(thinking, models),
 					modes,
 					models,
 				};
@@ -1236,6 +1244,7 @@ export class PiAcpAgent implements ACPAgent {
 			piSession,
 			conn: this.conn,
 			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
+			sessionAllowWrites: acpToolOverlay.sessionAllowWrites,
 		});
 
 		this.sessions.register(session);
@@ -1263,10 +1272,11 @@ export class PiAcpAgent implements ACPAgent {
 			})();
 		}, 0);
 
-		const modes = buildThinkingModes(piSession);
+		const thinking = buildThinkingModes(piSession);
+		const modes = buildWriteModes(session);
 		const models = buildModelState(piSession);
 		return {
-			configOptions: buildConfigOptions(modes, models),
+			configOptions: buildConfigOptions(thinking, models),
 			modes,
 			models,
 		};
@@ -1322,6 +1332,7 @@ export class PiAcpAgent implements ACPAgent {
 			piSession,
 			conn: this.conn,
 			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
+			sessionAllowWrites: acpToolOverlay.sessionAllowWrites,
 		});
 
 		this.sessions.register(session);
@@ -1348,11 +1359,12 @@ export class PiAcpAgent implements ACPAgent {
 			})();
 		}, 0);
 
-		const modes = buildThinkingModes(piSession);
+		const thinking = buildThinkingModes(piSession);
+		const modes = buildWriteModes(session);
 		const models = buildModelState(piSession);
 		return {
 			sessionId: newSessionId,
-			configOptions: buildConfigOptions(modes, models),
+			configOptions: buildConfigOptions(thinking, models),
 			modes,
 			models,
 		};
@@ -1361,15 +1373,17 @@ export class PiAcpAgent implements ACPAgent {
 	async setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse> {
 		const session = this.sessions.get(params.sessionId);
 		const mode = String(params.modeId);
-		if (!isThinkingLevel(mode)) {
+		if (mode === "review" || mode === "yolo") {
+			session.setWriteMode(mode);
+		} else if (isThinkingLevel(mode)) {
+			session.piSession.setThinkingLevel(mode);
+		} else {
 			throw RequestError.invalidParams(`Unknown modeId: ${mode}`);
 		}
 
-		session.piSession.setThinkingLevel(mode);
-
 		void this.conn.sessionUpdate({
 			sessionId: session.sessionId,
-			update: { sessionUpdate: "current_mode_update", currentModeId: mode },
+			update: { sessionUpdate: "current_mode_update", currentModeId: session.writeMode },
 		});
 
 		this.emitConfigOptionUpdate(session);
@@ -1432,9 +1446,9 @@ export class PiAcpAgent implements ACPAgent {
 	}
 
 	private emitConfigOptionUpdate(session: PiAcpSession): void {
-		const modes = buildThinkingModes(session.piSession);
+		const thinking = buildThinkingModes(session.piSession);
 		const models = buildModelState(session.piSession);
-		const configOptions = buildConfigOptions(modes, models);
+		const configOptions = buildConfigOptions(thinking, models);
 
 		void this.conn.sessionUpdate({
 			sessionId: session.sessionId,
@@ -1708,6 +1722,24 @@ export class PiAcpAgent implements ACPAgent {
 
 		return null;
 	}
+}
+
+function buildWriteModes(session: PiAcpSession): SessionModeState {
+	return {
+		currentModeId: session.writeMode,
+		availableModes: [
+			{
+				id: "review",
+				name: "Review",
+				description: "Writes go through Zed Review Changes",
+			},
+			{
+				id: "yolo",
+				name: "Yolo",
+				description: "Allow writes for the rest of this session",
+			},
+		],
+	};
 }
 
 function isThinkingLevel(x: string): x is ThinkingLevel {

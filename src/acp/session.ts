@@ -342,6 +342,8 @@ export class SessionManager {
 // ACP session wrapping a pi AgentSession
 // ---------------------------------------------------------------------------
 
+export type WriteMode = "review" | "yolo";
+
 export interface PiAcpSessionOpts {
 	sessionId: string;
 	cwd: string;
@@ -350,6 +352,9 @@ export interface PiAcpSessionOpts {
 	conn: AgentSideConnection;
 	/** Whether the client supports terminal output metadata. */
 	supportsTerminalOutput?: boolean | undefined;
+	/** Shared with gated edit/write tools. */
+	sessionAllowWrites?: { current: boolean };
+	writeMode?: WriteMode;
 	/**
 	 * Best-effort cleanup callbacks run at session dispose. PRD-002 §FR-5
 	 * `none` mode passes a tmpdir rmSync here. Callbacks must not throw
@@ -370,6 +375,8 @@ export class PiAcpSession {
 	readonly mcpServers: McpServer[];
 	readonly piSession: AgentSession;
 	readonly supportsTerminalOutput: boolean;
+	readonly sessionAllowWrites: { current: boolean };
+	writeMode: WriteMode;
 
 	private readonly conn: AgentSideConnection;
 
@@ -402,6 +409,9 @@ export class PiAcpSession {
 		this.piSession = opts.piSession;
 		this.conn = opts.conn;
 		this.supportsTerminalOutput = opts.supportsTerminalOutput ?? false;
+		this.sessionAllowWrites = opts.sessionAllowWrites ?? { current: false };
+		this.writeMode = opts.writeMode ?? "review";
+		this.sessionAllowWrites.current = this.writeMode === "yolo";
 		this.cleanups = opts.cleanups ?? [];
 		this.pendingDiagnosticsReport =
 			opts.diagnosticsReport !== undefined && opts.diagnosticsReport !== ""
@@ -409,6 +419,11 @@ export class PiAcpSession {
 				: null;
 		this.unsubscribe = this.piSession.subscribe((ev: AgentSessionEvent) => this.handlePiEvent(ev));
 		installReviewPermission((req) => this.requestReviewPermission(req));
+	}
+
+	setWriteMode(mode: WriteMode): void {
+		this.writeMode = mode;
+		this.sessionAllowWrites.current = mode === "yolo";
 	}
 
 	async requestReviewPermission(req: ReviewPermissionRequest): Promise<ReviewDecision> {
