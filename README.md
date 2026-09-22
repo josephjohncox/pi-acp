@@ -70,7 +70,7 @@ Open the Agent panel → pick **pi-acp** → **new thread**. Old session IDs die
 
 ### 2. Profiles (Composer vs Apply vs Inline)
 
-These are Zed agent profiles, not a second product. Keep index MCP off Apply/Inline.
+These are Zed agent profiles, not a second product.
 
 ```json
 {
@@ -107,27 +107,14 @@ These are Zed agent profiles, not a second product. Keep index MCP off Apply/Inl
           "edit_file": false
         },
         "enable_all_context_servers": false,
-        "context_servers": {
-          "codebase-index": {
-            "tools": {
-              "codebase_context": true,
-              "codebase_search": true,
-              "codebase_peek": true,
-              "index_status": true,
-              "implementation_lookup": true,
-              "call_graph": true,
-              "call_graph_path": true,
-              "architecture_context": true
-            }
-          }
-        }
+        "context_servers": {}
       }
     }
   }
 }
 ```
 
-Do not set `enable_all_context_servers: true`. That dumps every Zed MCP into the planner and hits Bifrost’s tool-list wall.
+Leave `enable_all_context_servers` false unless you intend every Zed MCP to land in the thread.
 
 ### 3. Review vs Yolo
 
