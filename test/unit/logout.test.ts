@@ -12,14 +12,15 @@ import { PiAcpAgent } from "@pi-acp/acp/agent";
 import { asAgentConn, FakeAgentSideConnection } from "../helpers/fakes";
 
 describe("PiAcpAgent.unstable_logout", () => {
-	test("no live session → mints AuthStorage.create() and runs (no throw)", async () => {
-		// With no live session the agent mints a fresh AuthStorage. We can't
-		// easily assert on-disk state without polluting ~/.pi, so just confirm
-		// the method returns without throwing.
+	test("no live session uses injected storage, not ~/.pi/agent/auth.json", async () => {
+		const storage = AuthStorage.inMemory({
+			anthropic: { type: "api_key", key: "do-not-touch-disk" },
+		});
 		const agent = new PiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
+		(agent as unknown as { createAuthStorage: () => AuthStorage }).createAuthStorage = () => storage;
 		const r = await agent.unstable_logout({});
 		expect(r).toBeDefined();
-		expect(r._meta).toBeDefined();
+		expect(storage.list()).toEqual([]);
 	});
 
 	test("clears every provider's credentials from the shared AuthStorage", async () => {

@@ -207,6 +207,13 @@ export class PiAcpAgent implements ACPAgent {
 	 * report `current: null` per ACP spec even after disable.
 	 */
 	private readonly disabledProviders = new Set<string>();
+	/** Overridable so tests never open ~/.pi/agent/auth.json. */
+	private createAuthStorage: () => AuthStorage = () => {
+		if (process.env.BUN_TEST === "1") {
+			throw new Error("refusing AuthStorage.create() under bun test (would wipe ~/.pi/agent/auth.json)");
+		}
+		return AuthStorage.create();
+	};
 	/**
 	 * Master toggle for `session/delete` advertisement + method body.
 	 *
@@ -331,7 +338,7 @@ export class PiAcpAgent implements ACPAgent {
 	async unstable_logout(_params: LogoutRequest): Promise<LogoutResponse> {
 		const live = this.sessions.first();
 		const authStorage =
-			live !== undefined ? live.piSession.modelRegistry.authStorage : AuthStorage.create();
+			live !== undefined ? live.piSession.modelRegistry.authStorage : this.createAuthStorage();
 		const providers = authStorage.list();
 		for (const p of providers) authStorage.remove(p);
 
@@ -518,15 +525,19 @@ export class PiAcpAgent implements ACPAgent {
 			createWriteToolDefinition(cwd, { operations: gated.write }) as unknown as ToolDefinition,
 		);
 
+		// Prefer Zed fs/read_text_file so the editor can follow the agent.
+		// If the client did not advertise it, still register the local read tool
+		// via the default definition so the allowlist stays honest.
 		if (wantRead) {
 			const operations = createAcpReadOperations({
 				conn: this.conn,
 				getSessionId: () => sessionIdRef.current,
 			});
-			const readToolDef = createReadToolDefinition(cwd, {
-				operations,
-			}) as unknown as ToolDefinition;
-			customTools.push(readToolDef);
+			customTools.push(
+				createReadToolDefinition(cwd, { operations }) as unknown as ToolDefinition,
+			);
+		} else {
+			customTools.push(createReadToolDefinition(cwd) as unknown as ToolDefinition);
 		}
 
 		if (wantBash) {

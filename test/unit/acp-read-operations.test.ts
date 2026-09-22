@@ -73,26 +73,25 @@ describe("createAcpReadOperations.readFile", () => {
 });
 
 describe("createAcpReadOperations.access", () => {
-	test("issues a readTextFile probe and discards the body", async () => {
+	test("does not probe via readTextFile (Zed follow-along)", async () => {
 		const { conn, calls } = makeStubConn(async () => ({ content: "discarded" }));
 		const ops = createAcpReadOperations({ conn, getSessionId: () => "s" });
 		await ops.access("/probe");
-		expect(calls).toHaveLength(1);
-		expect(calls[0]?.path).toBe("/probe");
+		expect(calls).toHaveLength(0);
 	});
 
-	test("throws when sessionId is empty", async () => {
-		const { conn } = makeStubConn(async () => ({ content: "" }));
-		const ops = createAcpReadOperations({ conn, getSessionId: () => "" });
-		await expect(ops.access("/x")).rejects.toThrow(/sessionId not yet bound/);
-	});
-
-	test("propagates connection errors as access denial", async () => {
-		const { conn } = makeStubConn(async () => {
-			throw new Error("ENOENT");
-		});
+	test("rejects directories without opening them in the client", async () => {
+		const { conn, calls } = makeStubConn(async () => ({ content: "" }));
 		const ops = createAcpReadOperations({ conn, getSessionId: () => "s" });
-		await expect(ops.access("/missing")).rejects.toThrow(/ENOENT/);
+		await expect(ops.access(process.cwd())).rejects.toThrow(/EISDIR/);
+		expect(calls).toHaveLength(0);
+	});
+
+	test("allows missing paths so the subsequent read can fail in ACP", async () => {
+		const { conn, calls } = makeStubConn(async () => ({ content: "" }));
+		const ops = createAcpReadOperations({ conn, getSessionId: () => "s" });
+		await ops.access("/definitely-missing-pi-acp-test-file");
+		expect(calls).toHaveLength(0);
 	});
 });
 

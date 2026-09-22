@@ -77,6 +77,17 @@ function intendedNewText(toolName: string, args: ToolArgs, oldText: string): str
 	return undefined;
 }
 
+export function lineFromArgs(args: ToolArgs, explicit?: number): number | undefined {
+	if (typeof explicit === "number" && Number.isFinite(explicit)) {
+		return Math.max(1, Math.floor(explicit));
+	}
+	const raw = args["offset"] ?? args["line"];
+	if (typeof raw === "number" && Number.isFinite(raw)) {
+		return Math.max(1, Math.floor(raw));
+	}
+	return undefined;
+}
+
 export function resolveToolPath(
 	args: ToolArgs,
 	cwd: string,
@@ -86,7 +97,8 @@ export function resolveToolPath(
 	if (p === undefined) return undefined;
 
 	const resolved = isAbsolute(p) ? p : resolvePath(cwd, p);
-	return [{ path: resolved, ...(typeof line === "number" ? { line } : {}) }];
+	const locLine = lineFromArgs(args, line);
+	return [{ path: resolved, ...(locLine !== undefined ? { line: locLine } : {}) }];
 }
 
 export function toToolKind(toolName: string): ToolKind {
