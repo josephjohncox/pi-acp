@@ -1,5 +1,5 @@
 /**
- * unstable_deleteSession is DISABLED by default via
+ * deleteSession is DISABLED by default via
  * PiAcpAgent.SESSION_DELETE_ENABLED. These tests assert the disabled
  * surface contract: any direct invocation throws methodNotFound and the
  * on-disk session file is left untouched. The capability is also NOT
@@ -36,11 +36,11 @@ function makeAgentWithSessionInCache(sessionId: string, sessionFile: string): Pi
 	return agent;
 }
 
-describe("PiAcpAgent.unstable_deleteSession (DISABLED by default)", () => {
+describe("PiAcpAgent.deleteSession (DISABLED by default)", () => {
 	test("any call throws methodNotFound (code -32601) regardless of sessionId", async () => {
 		const agent = new PiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
 		try {
-			await agent.unstable_deleteSession({ sessionId: "anything" });
+			await agent.deleteSession({ sessionId: "anything" });
 			throw new Error("expected throw");
 		} catch (e: unknown) {
 			const err = e as { code?: number };
@@ -54,7 +54,7 @@ describe("PiAcpAgent.unstable_deleteSession (DISABLED by default)", () => {
 
 		const agent = makeAgentWithSessionInCache("sess-1", sessionFile);
 		try {
-			await agent.unstable_deleteSession({ sessionId: "sess-1" });
+			await agent.deleteSession({ sessionId: "sess-1" });
 		} catch {
 			/* expected — disabled */
 		}

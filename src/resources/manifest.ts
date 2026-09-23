@@ -20,6 +20,45 @@ import { join } from "node:path";
 import { DEFAULT_MANIFEST, type Manifest, ManifestSchema } from "@pi-acp/resources/manifest.schema";
 import { parse as parseYaml } from "yaml";
 
+/** Expand a leading `~` / `~/` to the current user's home. `~other` is left alone. */
+export function expandHomePath(path: string): string {
+	if (path === "~") return homedir();
+	if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+	return path;
+}
+
+function expandOptionalPath(path: string | undefined): string | undefined {
+	return path === undefined ? undefined : expandHomePath(path);
+}
+
+function expandManifest(manifest: Manifest): Manifest {
+	return {
+		...manifest,
+		roots: manifest.roots.map((root) => {
+			if (root.kind === "local") {
+				return {
+					...root,
+					paths: {
+						...root.paths,
+						cwd: expandOptionalPath(root.paths.cwd),
+						agentDir: expandOptionalPath(root.paths.agentDir),
+					},
+				};
+			}
+			return {
+				...root,
+				paths: {
+					...root.paths,
+					skills: expandOptionalPath(root.paths.skills),
+					prompts: expandOptionalPath(root.paths.prompts),
+					extensions: expandOptionalPath(root.paths.extensions),
+					agentsFiles: root.paths.agentsFiles?.map(expandHomePath),
+				},
+			};
+		}),
+	};
+}
+
 export interface ManifestDiagnostic {
 	source: "session-params" | "project" | "user-global" | "default";
 	path?: string;
@@ -82,13 +121,14 @@ async function tryFromSessionParams(
 	if (manifestRef === undefined) return null;
 
 	if (typeof manifestRef === "string") {
-		const parsed = tryFromFile(manifestRef, "session-params", diagnostics);
-		if (parsed !== null) return { manifest: parsed, path: manifestRef };
+		const path = expandHomePath(manifestRef);
+		const parsed = tryFromFile(path, "session-params", diagnostics);
+		if (parsed !== null) return { manifest: parsed, path };
 		return null;
 	}
 
 	const result = ManifestSchema.safeParse(manifestRef);
-	if (result.success) return { manifest: result.data };
+	if (result.success) return { manifest: expandManifest(result.data) };
 	diagnostics.push({
 		source: "session-params",
 		message: `inline manifest validation failed: ${result.error.message}`,
@@ -125,7 +165,7 @@ function tryFromFile(
 		return null;
 	}
 	const result = ManifestSchema.safeParse(parsed);
-	if (result.success) return result.data;
+	if (result.success) return expandManifest(result.data);
 	diagnostics.push({
 		source,
 		path,

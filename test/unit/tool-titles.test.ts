@@ -144,6 +144,16 @@ describe("toToolKind", () => {
 		expect(toToolKind("lsp")).toBe("search");
 	});
 
+	test("agent/subagent -> execute", () => {
+		expect(toToolKind("agent")).toBe("execute");
+		expect(toToolKind("subagent")).toBe("execute");
+	});
+
+	test("wait/ask -> think", () => {
+		expect(toToolKind("wait")).toBe("think");
+		expect(toToolKind("ask")).toBe("think");
+	});
+
 	test("unknown -> other", () => {
 		expect(toToolKind("something_else")).toBe("other");
 	});

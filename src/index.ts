@@ -38,9 +38,29 @@ if (argv.includes("--terminal-login")) {
 } else if (argv.includes("--daemon-stop")) {
 	const { runDaemonStop } = await import("@pi-acp/client/operator");
 	await runDaemonStop();
+} else if (
+	argv.includes("--install-daemon") ||
+	argv.includes("--uninstall-daemon") ||
+	argv.includes("--restart-daemon")
+) {
+	await runLaunchInstaller(argv);
 } else {
 	const { runClient } = await import("@pi-acp/client/index");
 	await runClient();
+}
+
+async function runLaunchInstaller(argv: string[]): Promise<void> {
+	const { spawnSync } = await import("node:child_process");
+	const { dirname, join } = await import("node:path");
+	const { fileURLToPath } = await import("node:url");
+	const script = join(dirname(fileURLToPath(import.meta.url)), "..", "launch", "install.sh");
+	const cmd = argv.includes("--uninstall-daemon")
+		? "uninstall"
+		: argv.includes("--restart-daemon")
+			? "restart"
+			: "install";
+	const res = spawnSync("bash", [script, cmd], { stdio: "inherit", env: process.env });
+	process.exit(typeof res.status === "number" ? res.status : 1);
 }
 
 async function runTerminalLogin(): Promise<void> {

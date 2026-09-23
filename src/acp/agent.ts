@@ -11,8 +11,8 @@ import {
 	type CloseSessionResponse,
 	type DeleteSessionRequest,
 	type DeleteSessionResponse,
-	type DisableProvidersRequest,
-	type DisableProvidersResponse,
+	type DisableProviderRequest,
+	type DisableProviderResponse,
 	type ForkSessionRequest,
 	type ForkSessionResponse,
 	type InitializeRequest,
@@ -25,7 +25,6 @@ import {
 	type LoadSessionResponse,
 	type LogoutRequest,
 	type LogoutResponse,
-	type ModelInfo,
 	type NewSessionRequest,
 	type PromptRequest,
 	type PromptResponse,
@@ -34,14 +33,11 @@ import {
 	type ResumeSessionResponse,
 	type SessionConfigOption,
 	type SessionInfo,
-	type SessionModelState,
 	type SessionModeState,
-	type SetProvidersRequest,
-	type SetProvidersResponse,
+	type SetProviderRequest,
+	type SetProviderResponse,
 	type SetSessionConfigOptionRequest,
 	type SetSessionConfigOptionResponse,
-	type SetSessionModelRequest,
-	type SetSessionModelResponse,
 	type SetSessionModeRequest,
 	type SetSessionModeResponse,
 	type StopReason,
@@ -211,7 +207,9 @@ export class PiAcpAgent implements ACPAgent {
 	/** Overridable so tests never open ~/.pi/agent/auth.json. */
 	private createAuthStorage: () => AuthStorage = () => {
 		if (process.env["BUN_TEST"] === "1") {
-			throw new Error("refusing AuthStorage.create() under bun test (would wipe ~/.pi/agent/auth.json)");
+			throw new Error(
+				"refusing AuthStorage.create() under bun test (would wipe ~/.pi/agent/auth.json)",
+			);
 		}
 		return AuthStorage.create();
 	};
@@ -296,8 +294,8 @@ export class PiAcpAgent implements ACPAgent {
 		});
 	}
 
-	async unstable_setProvider(params: SetProvidersRequest): Promise<SetProvidersResponse> {
-		if (params.id === "") {
+	async unstable_setProvider(params: SetProviderRequest): Promise<SetProviderResponse> {
+		if (params.providerId === "") {
 			throw RequestError.invalidParams("provider id must be non-empty");
 		}
 		return applySetProvider(
@@ -306,10 +304,8 @@ export class PiAcpAgent implements ACPAgent {
 		);
 	}
 
-	async unstable_disableProvider(
-		params: DisableProvidersRequest,
-	): Promise<DisableProvidersResponse> {
-		if (params.id === "") {
+	async unstable_disableProvider(params: DisableProviderRequest): Promise<DisableProviderResponse> {
+		if (params.providerId === "") {
 			throw RequestError.invalidParams("provider id must be non-empty");
 		}
 		return applyDisableProvider(
@@ -336,7 +332,7 @@ export class PiAcpAgent implements ACPAgent {
 	 *
 	 * Gated by `agentCapabilities.auth.logout = {}`.
 	 */
-	async unstable_logout(_params: LogoutRequest): Promise<LogoutResponse> {
+	async logout(_params: LogoutRequest): Promise<LogoutResponse> {
 		const live = this.sessions.first();
 		const authStorage =
 			live !== undefined ? live.piSession.modelRegistry.authStorage : this.createAuthStorage();
@@ -539,9 +535,7 @@ export class PiAcpAgent implements ACPAgent {
 				conn: this.conn,
 				getSessionId: () => sessionIdRef.current,
 			});
-			customTools.push(
-				createReadToolDefinition(cwd, { operations }) as unknown as ToolDefinition,
-			);
+			customTools.push(createReadToolDefinition(cwd, { operations }) as unknown as ToolDefinition);
 		} else {
 			customTools.push(createReadToolDefinition(cwd) as unknown as ToolDefinition);
 		}
@@ -723,12 +717,14 @@ export class PiAcpAgent implements ACPAgent {
 			})();
 		}, 0);
 
-		return {
-			sessionId: session.sessionId,
-			configOptions,
-			modes,
+		return withZedModels(
+			{
+				sessionId: session.sessionId,
+				configOptions,
+				modes,
+			},
 			models,
-		};
+		);
 	}
 
 	async authenticate(_params: AuthenticateRequest) {
@@ -1082,11 +1078,13 @@ export class PiAcpAgent implements ACPAgent {
 			})();
 		}, 0);
 
-		return {
-			configOptions,
-			modes,
+		return withZedModels(
+			{
+				configOptions,
+				modes,
+			},
 			models,
-		};
+		);
 	}
 
 	async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
@@ -1136,7 +1134,7 @@ export class PiAcpAgent implements ACPAgent {
 	 * daemon registry entry first so the live piSession is disposed
 	 * cleanly before the file disappears.
 	 */
-	async unstable_deleteSession(params: DeleteSessionRequest): Promise<DeleteSessionResponse> {
+	async deleteSession(params: DeleteSessionRequest): Promise<DeleteSessionResponse> {
 		if (!PiAcpAgent.SESSION_DELETE_ENABLED) {
 			throw RequestError.methodNotFound("session/delete");
 		}
@@ -1184,11 +1182,13 @@ export class PiAcpAgent implements ACPAgent {
 			const thinking = buildThinkingModes(existing.piSession);
 			const modes = buildWriteModes(existing);
 			const models = buildModelState(existing.piSession);
-			return {
-				configOptions: buildConfigOptions(thinking, models),
-				modes,
+			return withZedModels(
+				{
+					configOptions: buildConfigOptions(thinking, models),
+					modes,
+				},
 				models,
-			};
+			);
 		}
 
 		// If another connection in the same daemon already holds the session,
@@ -1216,11 +1216,13 @@ export class PiAcpAgent implements ACPAgent {
 				const thinking = buildThinkingModes(attached.piSession);
 				const modes = buildWriteModes(session);
 				const models = buildModelState(attached.piSession);
-				return {
-					configOptions: buildConfigOptions(thinking, models),
-					modes,
+				return withZedModels(
+					{
+						configOptions: buildConfigOptions(thinking, models),
+						modes,
+					},
 					models,
-				};
+				);
 			}
 		}
 
@@ -1298,11 +1300,13 @@ export class PiAcpAgent implements ACPAgent {
 		const thinking = buildThinkingModes(piSession);
 		const modes = buildWriteModes(session);
 		const models = buildModelState(piSession);
-		return {
-			configOptions: buildConfigOptions(thinking, models),
-			modes,
+		return withZedModels(
+			{
+				configOptions: buildConfigOptions(thinking, models),
+				modes,
+			},
 			models,
-		};
+		);
 	}
 
 	async unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
@@ -1388,12 +1392,14 @@ export class PiAcpAgent implements ACPAgent {
 		const thinking = buildThinkingModes(piSession);
 		const modes = buildWriteModes(session);
 		const models = buildModelState(piSession);
-		return {
-			sessionId: newSessionId,
-			configOptions: buildConfigOptions(thinking, models),
-			modes,
+		return withZedModels(
+			{
+				sessionId: newSessionId,
+				configOptions: buildConfigOptions(thinking, models),
+				modes,
+			},
 			models,
-		};
+		);
 	}
 
 	async setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse> {
@@ -1415,9 +1421,7 @@ export class PiAcpAgent implements ACPAgent {
 		return {};
 	}
 
-	async unstable_setSessionModel(
-		params: SetSessionModelRequest,
-	): Promise<SetSessionModelResponse | void> {
+	async unstable_setSessionModel(params: { sessionId: string; modelId: string }): Promise<void> {
 		const session = this.sessions.get(params.sessionId);
 		const available = session.piSession.modelRegistry.getAvailable();
 
@@ -1772,6 +1776,21 @@ function isThinkingLevel(x: string): x is ThinkingLevel {
 	);
 }
 
+type ZedModelInfo = {
+	modelId: string;
+	name: string;
+	description: string | null;
+};
+
+type SessionModelState = {
+	availableModels: ZedModelInfo[];
+	currentModelId: string;
+};
+
+function withZedModels<T extends object>(payload: T, models: SessionModelState): T {
+	return { ...payload, models };
+}
+
 function buildThinkingModes(piSession: AgentSession): {
 	availableModes: Array<{ id: string; name: string; description?: string | null }>;
 	currentModeId: string;
@@ -1791,7 +1810,7 @@ function buildModelState(piSession: AgentSession): SessionModelState {
 	const available = piSession.modelRegistry.getAvailable();
 	const current = piSession.model;
 
-	const availableModels: ModelInfo[] = available.map((m) => ({
+	const availableModels: ZedModelInfo[] = available.map((m) => ({
 		modelId: `${m.provider}/${m.id}`,
 		name: `${m.provider}/${m.name ?? m.id}`,
 		description: null,

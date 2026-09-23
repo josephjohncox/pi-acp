@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadManifest } from "@pi-acp/resources/manifest";
+import { expandHomePath, loadManifest } from "@pi-acp/resources/manifest";
 import { DEFAULT_MANIFEST, ManifestSchema } from "@pi-acp/resources/manifest.schema";
 
 function fixtureDir(): string {
@@ -165,6 +165,47 @@ mode: overlay
 			expect(result.source).toBe("default");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("expandHomePath", () => {
+	test("expands ~ and ~/", () => {
+		expect(expandHomePath("~")).toBe(homedir());
+		expect(expandHomePath("~/.pi/agent")).toBe(join(homedir(), ".pi/agent"));
+	});
+
+	test("leaves absolute, relative, and ~user paths alone", () => {
+		expect(expandHomePath("/tmp/x")).toBe("/tmp/x");
+		expect(expandHomePath("rel/path")).toBe("rel/path");
+		expect(expandHomePath("~other/.pi")).toBe("~other/.pi");
+	});
+});
+
+describe("manifest home expansion", () => {
+	test("expands ~ in project local agentDir and cwd", async () => {
+		const dir = fixtureDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi-acp.yaml"),
+				`version: 1
+roots:
+  - id: pi-default
+    kind: local
+    paths:
+      agentDir: ~/.pi/agent
+      cwd: ~/src
+`,
+			);
+			const result = await loadManifest({ cwd: dir, sessionParams: undefined });
+			expect(result.source).toBe("project");
+			const root = result.manifest.roots[0];
+			expect(root?.kind).toBe("local");
+			if (root?.kind !== "local") return;
+			expect(root.paths.agentDir).toBe(join(homedir(), ".pi/agent"));
+			expect(root.paths.cwd).toBe(join(homedir(), "src"));
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });

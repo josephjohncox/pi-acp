@@ -1,3 +1,24 @@
+# [0.20.0](https://github.com/josephjohncox/pi-acp/compare/v0.19.0...v0.20.0) (2026-09-23)
+
+ACP SDK **1.5.0** (schema ~v1.23). Wire protocol is still version **1**. Zed stays connected.
+
+### Features
+
+* Launch unit installer: `pi-acp --install-daemon` / `--restart-daemon` / `--uninstall-daemon` (same as `pi-acp-install-daemon`). Pins `dist/index.mjs` through a durable `~/.pi/agent/bin/pi-acp-joseph` wrapper. Refuses npx cache paths.
+* Compaction and auto-retry show as one tool card each (`pi-lifecycle-compaction`, `pi-lifecycle-retry`). `agent`/`subagent` → execute; `wait`/`ask` → think.
+* Session model/thinking stay on `configOptions`. Extra `models` field still sent for older Zed. `session/set_model` is gone in the 1.5 router.
+
+### Bug Fixes
+
+* Expand `~` / `~/…` in overlay manifest paths (`~/.pi-acp/config.yaml`). Unexpanded `agentDir: ~/.pi/agent` was a relative path under the project cwd, so `pi-bifrost` never loaded and only Codex OAuth models appeared.
+* Provider APIs renamed to SDK 1.5 (`providerId`, singular set/disable). `logout` / `deleteSession` routed under the names the 1.5 SDK actually calls.
+
+### Docs
+
+* Config locations: pi (`~/.pi/agent/*`) vs overlay cascade (`session` → `<cwd>/.pi-acp.yaml` → `~/.pi-acp/config.yaml`).
+* LaunchAgent / systemd install, restart, uid domain.
+* Bifrost is a pi extension, not an ACP provider pane.
+
 # [0.19.0](https://github.com/josephjohncox/pi-acp/compare/v0.18.0...v0.19.0) (2026-09-22)
 
 

@@ -77,7 +77,7 @@ describe("buildListProvidersResponse", () => {
 			disabled: new Set(),
 		});
 		expect(r.providers).toHaveLength(2);
-		const anthropic = r.providers.find((p) => p.id === "anthropic");
+		const anthropic = r.providers.find((p) => p.providerId === "anthropic");
 		expect(anthropic?.supported).toContain("anthropic");
 		expect(anthropic?.required).toBe(false);
 		expect(anthropic?.current?.apiType).toBe("anthropic");
@@ -115,9 +115,13 @@ describe("buildListProvidersResponse", () => {
 			registries: () => [reg],
 			disabled: new Set(),
 		});
-		expect(r.providers.find((p) => p.id === "amazon-bedrock")?.supported).toContain("bedrock");
-		expect(r.providers.find((p) => p.id === "google-vertex")?.supported).toContain("vertex");
-		expect(r.providers.find((p) => p.id === "azure-openai-responses")?.supported).toContain(
+		expect(r.providers.find((p) => p.providerId === "amazon-bedrock")?.supported).toContain(
+			"bedrock",
+		);
+		expect(r.providers.find((p) => p.providerId === "google-vertex")?.supported).toContain(
+			"vertex",
+		);
+		expect(r.providers.find((p) => p.providerId === "azure-openai-responses")?.supported).toContain(
 			"azure",
 		);
 	});
@@ -131,7 +135,7 @@ describe("applySetProvider", () => {
 		applySetProvider(
 			{ registries: () => [a, b], disabled },
 			{
-				id: "openai",
+				providerId: "openai",
 				apiType: "openai",
 				baseUrl: "https://api.openai.com",
 				headers: { Authorization: "Bearer xxx" },
@@ -151,7 +155,7 @@ describe("applySetProvider", () => {
 		const disabled = new Set<string>(["openai"]);
 		applySetProvider(
 			{ registries: () => [reg], disabled },
-			{ id: "openai", apiType: "openai", baseUrl: "https://api.openai.com" },
+			{ providerId: "openai", apiType: "openai", baseUrl: "https://api.openai.com" },
 		);
 		expect(disabled.has("openai")).toBe(false);
 	});
@@ -162,7 +166,7 @@ describe("applyDisableProvider", () => {
 		const { reg: a, rec: aRec } = makeStubRegistry([]);
 		const { reg: b, rec: bRec } = makeStubRegistry([]);
 		const disabled = new Set<string>();
-		applyDisableProvider({ registries: () => [a, b], disabled }, { id: "anthropic" });
+		applyDisableProvider({ registries: () => [a, b], disabled }, { providerId: "anthropic" });
 		expect(disabled.has("anthropic")).toBe(true);
 		expect(aRec.unregistered).toEqual(["anthropic"]);
 		expect(bRec.unregistered).toEqual(["anthropic"]);
@@ -178,7 +182,7 @@ describe("applyDisableProvider", () => {
 		} as unknown as ModelRegistry;
 		const disabled = new Set<string>();
 		expect(() =>
-			applyDisableProvider({ registries: () => [reg], disabled }, { id: "x" }),
+			applyDisableProvider({ registries: () => [reg], disabled }, { providerId: "x" }),
 		).not.toThrow();
 		expect(disabled.has("x")).toBe(true);
 	});

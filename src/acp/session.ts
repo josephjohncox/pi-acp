@@ -111,6 +111,12 @@ export function toToolKind(toolName: string): ToolKind {
 		case "bash":
 		case "tmux":
 			return "execute";
+		case "agent":
+		case "subagent":
+			return "execute";
+		case "wait":
+		case "ask":
+			return "think";
 		case "lsp":
 			return "search";
 		default:
@@ -419,8 +425,7 @@ export class PiAcpSession {
 		this.supportsTerminalOutput = opts.supportsTerminalOutput ?? false;
 		this.useClientRead = opts.useClientRead ?? false;
 		this.sessionAllowWrites = opts.sessionAllowWrites ?? { current: false };
-		this.writeModeHolder =
-			opts.writeModeHolder ?? { current: opts.writeMode ?? "review" };
+		this.writeModeHolder = opts.writeModeHolder ?? { current: opts.writeMode ?? "review" };
 		if (opts.sessionAllowWrites === undefined) {
 			this.sessionAllowWrites.current = this.writeModeHolder.current === "yolo";
 		}
@@ -595,6 +600,7 @@ export class PiAcpSession {
 	}
 
 	private handlePiEvent(ev: AgentSessionEvent): void {
+		if (this.handleLifecycleEvent(ev)) return;
 		if (!isAgentEvent(ev)) return;
 
 		switch (ev.type) {
@@ -620,6 +626,90 @@ export class PiAcpSession {
 				unreachable(ev, "handlePiEvent");
 				break;
 		}
+	}
+
+	private handleLifecycleEvent(ev: AgentSessionEvent): boolean {
+		if (ev.type === "compaction_start") {
+			this.emitLifecycleCard(
+				"pi-lifecycle-compaction",
+				`Compacting context (${ev.reason})`,
+				"in_progress",
+				"think",
+			);
+			return true;
+		}
+		if (ev.type === "compaction_end") {
+			const status = ev.aborted || ev.errorMessage ? "failed" : "completed";
+			this.emitLifecycleCard(
+				"pi-lifecycle-compaction",
+				`Compacting context (${ev.reason})`,
+				status,
+				"think",
+				ev.errorMessage,
+			);
+			return true;
+		}
+		if (ev.type === "auto_retry_start") {
+			this.emitLifecycleCard(
+				"pi-lifecycle-retry",
+				`Waiting to retry (${ev.attempt}/${ev.maxAttempts})`,
+				"in_progress",
+				"other",
+				ev.errorMessage,
+			);
+			return true;
+		}
+		if (ev.type === "auto_retry_end") {
+			this.emitLifecycleCard(
+				"pi-lifecycle-retry",
+				"Waiting to retry",
+				ev.success ? "completed" : "failed",
+				"other",
+				ev.finalError,
+			);
+			return true;
+		}
+		return false;
+	}
+
+	private emitLifecycleCard(
+		toolCallId: string,
+		title: string,
+		status: "pending" | "in_progress" | "completed" | "failed",
+		kind: ToolKind,
+		detail?: string,
+	): void {
+		const existing = this.currentToolCalls.has(toolCallId);
+		if (status === "completed" || status === "failed") {
+			this.currentToolCalls.delete(toolCallId);
+		} else {
+			this.currentToolCalls.set(toolCallId, status);
+		}
+		const content =
+			detail !== undefined && detail !== ""
+				? ([{ type: "content", content: { type: "text", text: detail } }] as ToolCallContent[])
+				: undefined;
+		if (existing) {
+			this.emit({
+				sessionUpdate: "tool_call_update",
+				toolCallId,
+				title,
+				kind,
+				status,
+				...(content !== undefined ? { content } : {}),
+				_meta: { piAcp: { lifecycle: true } },
+			});
+			return;
+		}
+		this.emit({
+			sessionUpdate: "tool_call",
+			toolCallId,
+			title,
+			kind,
+			status,
+			...(content !== undefined ? { content } : {}),
+			_meta: { piAcp: { lifecycle: true } },
+		});
 	}
 
 	private handleMessageUpdate(ame: AssistantMessageEvent): void {
@@ -727,46 +817,48 @@ export class PiAcpSession {
 				: Promise.resolve();
 		this.editSnapshotReady.set(toolCallId, ready);
 
-		this.lastEmit = this.lastEmit.then(async () => {
-			await ready;
-			const snap = this.editSnapshots.get(toolCallId);
-			const line =
-				toolName === "edit" && snap !== undefined
-					? findUniqueLineNumber(snap.oldText, args.oldText ?? "")
-					: undefined;
-			const locations = resolveToolPath(args, this.cwd, line);
-			const meta = buildToolMeta(toolName);
-			if (!this.currentToolCalls.has(toolCallId)) {
-				this.currentToolCalls.set(toolCallId, "in_progress");
-				await this.conn.sessionUpdate({
-					sessionId: this.sessionId,
-					update: {
-						sessionUpdate: "tool_call",
-						toolCallId,
-						title: buildToolTitle(toolName, args),
-						kind: toToolKind(toolName),
-						status: "in_progress",
-						...(locations ? { locations } : {}),
-						rawInput: args,
-						_meta: meta,
-					},
-				});
-			} else {
-				this.currentToolCalls.set(toolCallId, "in_progress");
-				await this.conn.sessionUpdate({
-					sessionId: this.sessionId,
-					update: {
-						sessionUpdate: "tool_call_update",
-						toolCallId,
-						title: buildToolTitle(toolName, args),
-						status: "in_progress",
-						...(locations ? { locations } : {}),
-						rawInput: args,
-						_meta: meta,
-					},
-				});
-			}
-		}).catch(() => {});
+		this.lastEmit = this.lastEmit
+			.then(async () => {
+				await ready;
+				const snap = this.editSnapshots.get(toolCallId);
+				const line =
+					toolName === "edit" && snap !== undefined
+						? findUniqueLineNumber(snap.oldText, args.oldText ?? "")
+						: undefined;
+				const locations = resolveToolPath(args, this.cwd, line);
+				const meta = buildToolMeta(toolName);
+				if (!this.currentToolCalls.has(toolCallId)) {
+					this.currentToolCalls.set(toolCallId, "in_progress");
+					await this.conn.sessionUpdate({
+						sessionId: this.sessionId,
+						update: {
+							sessionUpdate: "tool_call",
+							toolCallId,
+							title: buildToolTitle(toolName, args),
+							kind: toToolKind(toolName),
+							status: "in_progress",
+							...(locations ? { locations } : {}),
+							rawInput: args,
+							_meta: meta,
+						},
+					});
+				} else {
+					this.currentToolCalls.set(toolCallId, "in_progress");
+					await this.conn.sessionUpdate({
+						sessionId: this.sessionId,
+						update: {
+							sessionUpdate: "tool_call_update",
+							toolCallId,
+							title: buildToolTitle(toolName, args),
+							status: "in_progress",
+							...(locations ? { locations } : {}),
+							rawInput: args,
+							_meta: meta,
+						},
+					});
+				}
+			})
+			.catch(() => {});
 	}
 
 	private handleToolUpdate(toolCallId: string, toolName: string, partialResult: unknown): void {

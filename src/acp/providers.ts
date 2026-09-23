@@ -20,13 +20,13 @@
  */
 
 import type {
-	DisableProvidersRequest,
-	DisableProvidersResponse,
+	DisableProviderRequest,
+	DisableProviderResponse,
 	ListProvidersResponse,
 	LlmProtocol,
 	ProviderInfo,
-	SetProvidersRequest,
-	SetProvidersResponse,
+	SetProviderRequest,
+	SetProviderResponse,
 } from "@agentclientprotocol/sdk";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 
@@ -102,7 +102,7 @@ export function buildListProvidersResponse(deps: ProviderHandlersDeps): ListProv
 		const primaryProtocol = supported[0] ?? ("openai" as LlmProtocol);
 		const disabled = deps.disabled.has(id);
 		const info: ProviderInfo = {
-			id,
+			providerId: id,
 			supported,
 			required: false,
 			current: disabled ? null : { apiType: primaryProtocol, baseUrl: primaryBaseUrl },
@@ -115,29 +115,29 @@ export function buildListProvidersResponse(deps: ProviderHandlersDeps): ListProv
 
 export function applySetProvider(
 	deps: ProviderHandlersDeps,
-	params: SetProvidersRequest,
-): SetProvidersResponse {
+	params: SetProviderRequest,
+): SetProviderResponse {
 	const config = {
 		baseUrl: params.baseUrl,
 		api: acpProtocolToPiApi(params.apiType),
 		...(params.headers !== undefined ? { headers: params.headers } : {}),
 	};
 	for (const reg of deps.registries()) {
-		reg.registerProvider(params.id, config);
+		reg.registerProvider(params.providerId, config);
 	}
 	// Setting a provider implicitly re-enables it if previously disabled.
-	deps.disabled.delete(params.id);
+	deps.disabled.delete(params.providerId);
 	return {};
 }
 
 export function applyDisableProvider(
 	deps: ProviderHandlersDeps,
-	params: DisableProvidersRequest,
-): DisableProvidersResponse {
-	deps.disabled.add(params.id);
+	params: DisableProviderRequest,
+): DisableProviderResponse {
+	deps.disabled.add(params.providerId);
 	for (const reg of deps.registries()) {
 		try {
-			reg.unregisterProvider(params.id);
+			reg.unregisterProvider(params.providerId);
 		} catch {
 			// best-effort — provider may have already been unregistered
 		}

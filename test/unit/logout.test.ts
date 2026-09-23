@@ -11,14 +11,15 @@ import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import { PiAcpAgent } from "@pi-acp/acp/agent";
 import { asAgentConn, FakeAgentSideConnection } from "../helpers/fakes";
 
-describe("PiAcpAgent.unstable_logout", () => {
+describe("PiAcpAgent.logout", () => {
 	test("no live session uses injected storage, not ~/.pi/agent/auth.json", async () => {
 		const storage = AuthStorage.inMemory({
 			anthropic: { type: "api_key", key: "do-not-touch-disk" },
 		});
 		const agent = new PiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
-		(agent as unknown as { createAuthStorage: () => AuthStorage }).createAuthStorage = () => storage;
-		const r = await agent.unstable_logout({});
+		(agent as unknown as { createAuthStorage: () => AuthStorage }).createAuthStorage = () =>
+			storage;
+		const r = await agent.logout({});
 		expect(r).toBeDefined();
 		expect(storage.list()).toEqual([]);
 	});
@@ -41,7 +42,7 @@ describe("PiAcpAgent.unstable_logout", () => {
 			.sessions;
 		sessionsField.register(fakeSession);
 
-		const r = await agent.unstable_logout({});
+		const r = await agent.logout({});
 		expect(storage.list()).toEqual([]);
 		const meta = r._meta as { piAcp?: { clearedProviders?: string[] } };
 		expect(meta.piAcp?.clearedProviders).toEqual(expect.arrayContaining(["anthropic", "openai"]));
@@ -58,7 +59,7 @@ describe("PiAcpAgent.unstable_logout", () => {
 		(agent as unknown as { sessions: { register: (s: unknown) => void } }).sessions.register(
 			fakeSession,
 		);
-		await agent.unstable_logout({});
+		await agent.logout({});
 		// allow microtask queue to flush the void-await sessionUpdate
 		await new Promise<void>((r) => setTimeout(r, 10));
 		const announce = conn.updates.find(
@@ -83,10 +84,10 @@ describe("PiAcpAgent.unstable_logout", () => {
 		(agent as unknown as { sessions: { register: (s: unknown) => void } }).sessions.register(
 			fakeSession,
 		);
-		await agent.unstable_logout({});
+		await agent.logout({});
 		expect(storage.list()).toEqual([]);
 		// Second call must still succeed
-		const r = await agent.unstable_logout({});
+		const r = await agent.logout({});
 		expect(r).toBeDefined();
 	});
 });

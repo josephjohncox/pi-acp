@@ -642,4 +642,51 @@ describe("prompt queueing", () => {
 		expect(r2).toBe("cancelled");
 		expect(r3).toBe("cancelled");
 	});
+
+	test("compaction start/end emit one lifecycle tool card", async () => {
+		const { conn, piSession } = createSession();
+		piSession.emit({ type: "compaction_start", reason: "threshold" } as never);
+		piSession.emit({
+			type: "compaction_end",
+			reason: "threshold",
+			aborted: false,
+			willRetry: false,
+		} as never);
+		await tick();
+
+		expect(conn.updates).toHaveLength(2);
+		const start = conn.updates[0]?.update as R;
+		const end = conn.updates[1]?.update as R;
+		expect(start["sessionUpdate"]).toBe("tool_call");
+		expect(start["toolCallId"]).toBe("pi-lifecycle-compaction");
+		expect(start["kind"]).toBe("think");
+		expect(start["status"]).toBe("in_progress");
+		expect(end["sessionUpdate"]).toBe("tool_call_update");
+		expect(end["status"]).toBe("completed");
+	});
+
+	test("auto_retry start/end emit one wait tool card", async () => {
+		const { conn, piSession } = createSession();
+		piSession.emit({
+			type: "auto_retry_start",
+			attempt: 1,
+			maxAttempts: 3,
+			delayMs: 100,
+			errorMessage: "rate limited",
+		} as never);
+		piSession.emit({
+			type: "auto_retry_end",
+			success: true,
+			attempt: 1,
+		} as never);
+		await tick();
+
+		expect(conn.updates).toHaveLength(2);
+		const start = conn.updates[0]?.update as R;
+		const end = conn.updates[1]?.update as R;
+		expect(start["sessionUpdate"]).toBe("tool_call");
+		expect(start["toolCallId"]).toBe("pi-lifecycle-retry");
+		expect(start["title"]).toBe("Waiting to retry (1/3)");
+		expect(end["status"]).toBe("completed");
+	});
 });
